@@ -65,6 +65,7 @@
 #include <linux/cdev.h>
 #include <linux/delay.h>
 #include <linux/kthread.h>
+#include <rdma/rdma_vt.h>
 
 #include "chip_registers.h"
 #include "common.h"

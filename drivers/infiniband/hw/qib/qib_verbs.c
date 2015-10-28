@@ -2070,7 +2070,7 @@ static int qib_port_immutable(struct ib_device *ibdev, u8 port_num,
 int qib_register_ib_device(struct qib_devdata *dd)
 {
 	struct qib_ibdev *dev = &dd->verbs_dev;
-	struct ib_device *ibdev = &dev->ibdev;
+	struct ib_device *ibdev = &dev->rdi.ibdev;
 	struct qib_pportdata *ppd = dd->pport;
 	unsigned i, lk_tab_size;
 	int ret;
@@ -2260,7 +2260,12 @@ int qib_register_ib_device(struct qib_devdata *dd)
 	snprintf(ibdev->node_desc, sizeof(ibdev->node_desc),
 		 "Intel Infiniband HCA %s", init_utsname()->nodename);
 
-	ret = ib_register_device(ibdev, qib_create_port_files);
+	/*
+	 * Fill in rvt info object.
+	 */
+	dd->verbs_dev.rdi.port_callback = qib_create_port_files;
+
+	ret = rvt_register_device(&dd->verbs_dev.rdi);
 	if (ret)
 		goto err_reg;
 
@@ -2277,7 +2282,7 @@ int qib_register_ib_device(struct qib_devdata *dd)
 err_class:
 	qib_free_agents(dev);
 err_agents:
-	ib_unregister_device(ibdev);
+	rvt_unregister_device(&dd->verbs_dev.rdi);
 err_reg:
 err_tx:
 	while (!list_empty(&dev->txreq_free)) {
@@ -2306,7 +2311,6 @@ bail:
 void qib_unregister_ib_device(struct qib_devdata *dd)
 {
 	struct qib_ibdev *dev = &dd->verbs_dev;
-	struct ib_device *ibdev = &dev->ibdev;
 	u32 qps_inuse;
 	unsigned lk_tab_size;
 
@@ -2314,7 +2318,7 @@ void qib_unregister_ib_device(struct qib_devdata *dd)
 
 	qib_free_agents(dev);
 
-	ib_unregister_device(ibdev);
+	rvt_unregister_device(&dd->verbs_dev.rdi);
 
 	if (!list_empty(&dev->piowait))
 		qib_dev_err(dd, "piowait list not empty!\n");
