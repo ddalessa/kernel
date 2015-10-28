@@ -49,10 +49,11 @@
  */
 #include <linux/types.h>
 #include <linux/scatterlist.h>
+#include <rdma/ib_verbs.h>
 
-#include "verbs.h"
+#include "dma.h"
 
-#define BAD_DMA_ADDRESS ((u64) 0)
+#define BAD_DMA_ADDRESS ((u64)0)
 
 /*
  * The following functions implement driver specific replacements
@@ -63,28 +64,28 @@
  * data instead of using hardware DMA.
  */
 
-static int hfi1_mapping_error(struct ib_device *dev, u64 dma_addr)
+static int rvt_mapping_error(struct ib_device *dev, u64 dma_addr)
 {
 	return dma_addr == BAD_DMA_ADDRESS;
 }
 
-static u64 hfi1_dma_map_single(struct ib_device *dev, void *cpu_addr,
-			       size_t size, enum dma_data_direction direction)
+static u64 rvt_dma_map_single(struct ib_device *dev, void *cpu_addr,
+			      size_t size, enum dma_data_direction direction)
 {
 	if (WARN_ON(!valid_dma_direction(direction)))
 		return BAD_DMA_ADDRESS;
 
-	return (u64) cpu_addr;
+	return (u64)cpu_addr;
 }
 
-static void hfi1_dma_unmap_single(struct ib_device *dev, u64 addr, size_t size,
-				  enum dma_data_direction direction)
+static void rvt_dma_unmap_single(struct ib_device *dev, u64 addr, size_t size,
+				 enum dma_data_direction direction)
 {
 	/* This is a stub, nothing to be done here */
 }
 
-static u64 hfi1_dma_map_page(struct ib_device *dev, struct page *page,
-			     unsigned long offset, size_t size,
+static u64 rvt_dma_map_page(struct ib_device *dev, struct page *page,
+			    unsigned long offset, size_t size,
 			    enum dma_data_direction direction)
 {
 	u64 addr;
@@ -95,21 +96,21 @@ static u64 hfi1_dma_map_page(struct ib_device *dev, struct page *page,
 	if (offset + size > PAGE_SIZE)
 		return BAD_DMA_ADDRESS;
 
-	addr = (u64) page_address(page);
+	addr = (u64)page_address(page);
 	if (addr)
 		addr += offset;
 
 	return addr;
 }
 
-static void hfi1_dma_unmap_page(struct ib_device *dev, u64 addr, size_t size,
-				enum dma_data_direction direction)
+static void rvt_dma_unmap_page(struct ib_device *dev, u64 addr, size_t size,
+			       enum dma_data_direction direction)
 {
 	/* This is a stub, nothing to be done here */
 }
 
-static int hfi1_map_sg(struct ib_device *dev, struct scatterlist *sgl,
-		       int nents, enum dma_data_direction direction)
+static int rvt_map_sg(struct ib_device *dev, struct scatterlist *sgl,
+		      int nents, enum dma_data_direction direction)
 {
 	struct scatterlist *sg;
 	u64 addr;
@@ -120,7 +121,7 @@ static int hfi1_map_sg(struct ib_device *dev, struct scatterlist *sgl,
 		return BAD_DMA_ADDRESS;
 
 	for_each_sg(sgl, sg, nents, i) {
-		addr = (u64) page_address(sg_page(sg));
+		addr = (u64)page_address(sg_page(sg));
 		if (!addr) {
 			ret = 0;
 			break;
@@ -133,26 +134,26 @@ static int hfi1_map_sg(struct ib_device *dev, struct scatterlist *sgl,
 	return ret;
 }
 
-static void hfi1_unmap_sg(struct ib_device *dev,
-			  struct scatterlist *sg, int nents,
+static void rvt_unmap_sg(struct ib_device *dev,
+			 struct scatterlist *sg, int nents,
 			 enum dma_data_direction direction)
 {
 	/* This is a stub, nothing to be done here */
 }
 
-static void hfi1_sync_single_for_cpu(struct ib_device *dev, u64 addr,
-				     size_t size, enum dma_data_direction dir)
+static void rvt_sync_single_for_cpu(struct ib_device *dev, u64 addr,
+				    size_t size, enum dma_data_direction dir)
 {
 }
 
-static void hfi1_sync_single_for_device(struct ib_device *dev, u64 addr,
-					size_t size,
-					enum dma_data_direction dir)
+static void rvt_sync_single_for_device(struct ib_device *dev, u64 addr,
+				       size_t size,
+				       enum dma_data_direction dir)
 {
 }
 
-static void *hfi1_dma_alloc_coherent(struct ib_device *dev, size_t size,
-				     u64 *dma_handle, gfp_t flag)
+static void *rvt_dma_alloc_coherent(struct ib_device *dev, size_t size,
+				    u64 *dma_handle, gfp_t flag)
 {
 	struct page *p;
 	void *addr = NULL;
@@ -161,26 +162,26 @@ static void *hfi1_dma_alloc_coherent(struct ib_device *dev, size_t size,
 	if (p)
 		addr = page_address(p);
 	if (dma_handle)
-		*dma_handle = (u64) addr;
+		*dma_handle = (u64)addr;
 	return addr;
 }
 
-static void hfi1_dma_free_coherent(struct ib_device *dev, size_t size,
-				   void *cpu_addr, u64 dma_handle)
+static void rvt_dma_free_coherent(struct ib_device *dev, size_t size,
+				  void *cpu_addr, u64 dma_handle)
 {
-	free_pages((unsigned long) cpu_addr, get_order(size));
+	free_pages((unsigned long)cpu_addr, get_order(size));
 }
 
-struct ib_dma_mapping_ops hfi1_dma_mapping_ops = {
-	.mapping_error = hfi1_mapping_error,
-	.map_single = hfi1_dma_map_single,
-	.unmap_single = hfi1_dma_unmap_single,
-	.map_page = hfi1_dma_map_page,
-	.unmap_page = hfi1_dma_unmap_page,
-	.map_sg = hfi1_map_sg,
-	.unmap_sg = hfi1_unmap_sg,
-	.sync_single_for_cpu = hfi1_sync_single_for_cpu,
-	.sync_single_for_device = hfi1_sync_single_for_device,
-	.alloc_coherent = hfi1_dma_alloc_coherent,
-	.free_coherent = hfi1_dma_free_coherent
+struct ib_dma_mapping_ops rvt_default_dma_mapping_ops = {
+	.mapping_error = rvt_mapping_error,
+	.map_single = rvt_dma_map_single,
+	.unmap_single = rvt_dma_unmap_single,
+	.map_page = rvt_dma_map_page,
+	.unmap_page = rvt_dma_unmap_page,
+	.map_sg = rvt_map_sg,
+	.unmap_sg = rvt_unmap_sg,
+	.sync_single_for_cpu = rvt_sync_single_for_cpu,
+	.sync_single_for_device = rvt_sync_single_for_device,
+	.alloc_coherent = rvt_dma_alloc_coherent,
+	.free_coherent = rvt_dma_free_coherent
 };
