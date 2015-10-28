@@ -1,5 +1,5 @@
-#ifndef DEF_RDMAVT_H
-#define DEF_RDMAVT_H
+#ifndef DEF_RVTMR_H
+#define DEF_RVTMR_H
 
 /*
  *
@@ -52,20 +52,27 @@
  */
 
 #include <rdma/rdma_vt.h>
-#include "dma.h"
-#include "pd.h"
 
-#include "qp.h"
-#include "ah.h"
-#include "mr.h"
+/* Mem Regions */
+struct ib_mr *rvt_get_dma_mr(struct ib_pd *pd, int acc);
+struct ib_mr *rvt_reg_phys_mr(struct ib_pd *pd,
+			      struct ib_phys_buf *buffer_list,
+			      int num_phys_buf, int acc, u64 *iova_start);
+struct ib_mr *rvt_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
+			      u64 virt_addr, int mr_access_flags,
+			      struct ib_udata *udata);
+int rvt_dereg_mr(struct ib_mr *ibmr);
+struct ib_mr *rvt_alloc_mr(struct ib_pd *pd,
+			   enum ib_mr_type mr_type,
+			   u32 max_num_sg);
+struct ib_fast_reg_page_list *
+rvt_alloc_fast_reg_page_list(struct ib_device *ibdev, int page_list_len);
+void rvt_free_fast_reg_page_list(struct ib_fast_reg_page_list *pl);
+struct ib_fmr *rvt_alloc_fmr(struct ib_pd *pd, int mr_access_flags,
+			     struct ib_fmr_attr *fmr_attr);
+int rvt_map_phys_fmr(struct ib_fmr *ibfmr, u64 *page_list,
+		     int list_len, u64 iova);
+int rvt_unmap_fmr(struct list_head *fmr_list);
+int rvt_dealloc_fmr(struct ib_fmr *ibfmr);
 
-struct rvt_dev_data {
-	void *driver_priv;
-};
-
-struct rvt_priv {
-	spinlock_t l_lock; /* Locks the dev list */
-	struct list_head dev_list;
-};
-
-#endif          /* DEF_RDMAVT_H */
+#endif          /* DEF_RVTMR_H */

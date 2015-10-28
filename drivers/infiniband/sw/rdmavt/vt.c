@@ -243,6 +243,19 @@ int rvt_register_device(struct rvt_dev_info *rdi)
 	CDR(rdi, modify_ah);
 	CDR(rdi, query_ah);
 
+	/* Mem Region */
+	CDR(rdi, get_dma_mr);
+	CDR(rdi, reg_phys_mr);
+	CDR(rdi, reg_user_mr);
+	CDR(rdi, dereg_mr);
+	CDR(rdi, alloc_mr);
+	CDR(rdi, alloc_fast_reg_page_list);
+	CDR(rdi, free_fast_reg_page_list);
+	CDR(rdi, alloc_fmr);
+	CDR(rdi, map_phys_fmr);
+	CDR(rdi, unmap_fmr);
+	CDR(rdi, dealloc_fmr);
+
 	/* DMA Operations */
 	rdi->ibdev.dma_ops =
 		rdi->ibdev.dma_ops ? : &rvt_default_dma_mapping_ops;
