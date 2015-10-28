@@ -1,5 +1,5 @@
-#ifndef DEF_RDMAVT_H
-#define DEF_RDMAVT_H
+#ifndef DEF_RDMAVTMMAP_H
+#define DEF_RDMAVTMMAP_H
 
 /*
  *
@@ -52,23 +52,7 @@
  */
 
 #include <rdma/rdma_vt.h>
-#include "dma.h"
-#include "pd.h"
 
-#include "qp.h"
-#include "ah.h"
-#include "mr.h"
-#include "srq.h"
-#include "mcast.h"
-#include "mmap.h"
+int rvt_mmap(struct ib_ucontext *context, struct vm_area_struct *vma);
 
-struct rvt_dev_data {
-	void *driver_priv;
-};
-
-struct rvt_priv {
-	spinlock_t l_lock; /* Locks the dev list */
-	struct list_head dev_list;
-};
-
-#endif          /* DEF_RDMAVT_H */
+#endif          /* DEF_RDMAVTMMAP_H */
