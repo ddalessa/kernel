@@ -1,6 +1,3 @@
-#ifndef DEF_RDMAVT_H
-#define DEF_RDMAVT_H
-
 /*
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
@@ -51,20 +48,37 @@
  *
  */
 
-#include <rdma/rdma_vt.h>
-#include "dma.h"
-#include "pd.h"
-
-#include "qp.h"
 #include "ah.h"
 
-struct rvt_dev_data {
-	void *driver_priv;
-};
+/**
+ * rvt_create_ah - create an address handle
+ * @pd: the protection domain
+ * @ah_attr: the attributes of the AH
+ *
+ * This may be called from interrupt context.
+ */
+struct ib_ah *rvt_create_ah(struct ib_pd *pd,
+			    struct ib_ah_attr *ah_attr)
+{
+	/*
+	 * VT-DRIVER-API: qp_mtu()
+	 * See description in rvt_create_qp()
+	 */
 
-struct rvt_priv {
-	spinlock_t l_lock; /* Locks the dev list */
-	struct list_head dev_list;
-};
+	return ERR_PTR(-EINVAL);
+}
 
-#endif          /* DEF_RDMAVT_H */
+int rvt_destroy_ah(struct ib_ah *ibah)
+{
+	return -EINVAL;
+}
+
+int rvt_modify_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
+{
+	return -EINVAL;
+}
+
+int rvt_query_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
+{
+	return -EINVAL;
+}

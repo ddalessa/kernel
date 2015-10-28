@@ -1,5 +1,5 @@
-#ifndef DEF_RDMAVT_H
-#define DEF_RDMAVT_H
+#ifndef DEF_RVTAH_H
+#define DEF_RVTAH_H
 
 /*
  *
@@ -52,19 +52,11 @@
  */
 
 #include <rdma/rdma_vt.h>
-#include "dma.h"
-#include "pd.h"
 
-#include "qp.h"
-#include "ah.h"
+struct ib_ah *rvt_create_ah(struct ib_pd *pd,
+			    struct ib_ah_attr *ah_attr);
+int rvt_destroy_ah(struct ib_ah *ibah);
+int rvt_modify_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr);
+int rvt_query_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr);
 
-struct rvt_dev_data {
-	void *driver_priv;
-};
-
-struct rvt_priv {
-	spinlock_t l_lock; /* Locks the dev list */
-	struct list_head dev_list;
-};
-
-#endif          /* DEF_RDMAVT_H */
+#endif          /* DEF_RVTAH_H */
