@@ -1,6 +1,3 @@
-#ifndef DEF_RDMAVT_H
-#define DEF_RDMAVT_H
-
 /*
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
@@ -51,22 +48,42 @@
  *
  */
 
-#include <rdma/rdma_vt.h>
-#include "dma.h"
-#include "pd.h"
-
-#include "qp.h"
-#include "ah.h"
-#include "mr.h"
 #include "srq.h"
 
-struct rvt_dev_data {
-	void *driver_priv;
-};
+/**
+ * rvt_create_srq - create a shared receive queue
+ * @ibpd: the protection domain of the SRQ to create
+ * @srq_init_attr: the attributes of the SRQ
+ * @udata: data from libibverbs when creating a user SRQ
+ */
+struct ib_srq *rvt_create_srq(struct ib_pd *ibpd,
+			      struct ib_srq_init_attr *srq_init_attr,
+			      struct ib_udata *udata)
+{
+	return ERR_PTR(-ENOMEM);
+}
 
-struct rvt_priv {
-	spinlock_t l_lock; /* Locks the dev list */
-	struct list_head dev_list;
-};
+/**
+ * rvt_modify_srq - modify a shared receive queue
+ * @ibsrq: the SRQ to modify
+ * @attr: the new attributes of the SRQ
+ * @attr_mask: indicates which attributes to modify
+ * @udata: user data for libibverbs.so
+ */
+int rvt_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
+		   enum ib_srq_attr_mask attr_mask,
+		   struct ib_udata *udata)
+{
+	return -EINVAL;
+}
 
-#endif          /* DEF_RDMAVT_H */
+int rvt_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
+{
+	return -EINVAL;
+}
+
+int rvt_destroy_srq(struct ib_srq *ibsrq)
+{
+	return -EINVAL;
+}
+
