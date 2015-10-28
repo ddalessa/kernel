@@ -1,5 +1,5 @@
-#ifndef DEF_RDMAVT_H
-#define DEF_RDMAVT_H
+#ifndef DEF_RVTQP_H
+#define DEF_RVTQP_H
 
 /*
  *
@@ -52,18 +52,19 @@
  */
 
 #include <rdma/rdma_vt.h>
-#include "dma.h"
-#include "pd.h"
 
-#include "qp.h"
-
-struct rvt_dev_data {
-	void *driver_priv;
+struct rvt_qp {
+	struct ib_qp *ibqp;
+	/* Other stuff */
 };
 
-struct rvt_priv {
-	spinlock_t l_lock; /* Locks the dev list */
-	struct list_head dev_list;
-};
+struct ib_qp *rvt_create_qp(struct ib_pd *ibpd,
+			    struct ib_qp_init_attr *init_attr,
+			    struct ib_udata *udata);
+int rvt_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+		  int attr_mask, struct ib_udata *udata);
+int rvt_destroy_qp(struct ib_qp *ibqp);
+int rvt_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+		 int attr_mask, struct ib_qp_init_attr *init_attr);
 
-#endif          /* DEF_RDMAVT_H */
+#endif          /* DEF_RVTQP_H */
