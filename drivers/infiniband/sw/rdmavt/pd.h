@@ -1,3 +1,6 @@
+#ifndef DEF_RDMAVTPD_H
+#define DEF_RDMAVTPD_H
+
 /*
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
@@ -48,69 +51,11 @@
  *
  */
 
-#include <linux/module.h>
-#include <linux/kernel.h>
-#include "vt.h"
+#include <rdma/rdma_vt.h>
 
-#define RDMAVT_DRIVER_VERSION "0.1"
+struct ib_pd *rvt_alloc_pd(struct ib_device *ibdev,
+			   struct ib_ucontext *context,
+			   struct ib_udata *udata);
+int rvt_dealloc_pd(struct ib_pd *ibpd);
 
-MODULE_LICENSE("Dual BSD/GPL");
-MODULE_DESCRIPTION("RDMA Verbs Transport Library");
-MODULE_VERSION(RDMAVT_DRIVER_VERSION);
-
-static struct rvt_priv rv;
-
-static int rvt_init(void)
-{
-	/* Set up misc supporting data structures */
-	INIT_LIST_HEAD(&rv.dev_list);
-	spin_lock_init(&rv.l_lock);
-
-	return 0;
-}
-module_init(rvt_init);
-
-static void rvt_cleanup(void)
-{
-}
-module_exit(rvt_cleanup);
-
-int rvt_register_device(struct rvt_dev_info *rdi)
-{
-	if (!rdi)
-		return -EINVAL;
-
-	/*
-	 * Drivers have the option to override anything in the ibdev that they
-	 * want to specifically handle. VT needs to check for things it supports
-	 * and if the driver wants to handle that functionality let it. We may
-	 * come up with a better mechanism that simplifies the code at some
-	 * point.
-	 */
-
-	/* DMA Operations */
-	rdi->ibdev.dma_ops =
-		rdi->ibdev.dma_ops ? : &rvt_default_dma_mapping_ops;
-
-	/* Protection Domain */
-	rdi->ibdev.alloc_pd =
-		rdi->ibdev.alloc_pd ? : rvt_alloc_pd;
-	rdi->ibdev.dealloc_pd =
-		rdi->ibdev.dealloc_pd ? : rvt_dealloc_pd;
-
-	spin_lock_init(&rdi->n_pds_lock);
-	rdi->n_pds_allocated = 0;
-
-	/* We are now good to announce we exist */
-	return ib_register_device(&rdi->ibdev, rdi->port_callback);
-}
-EXPORT_SYMBOL(rvt_register_device);
-
-void rvt_unregister_device(struct rvt_dev_info *rdi)
-{
-	if (!rdi)
-		return;
-
-	ib_unregister_device(&rdi->ibdev);
-}
-EXPORT_SYMBOL(rvt_unregister_device);
+#endif          /* DEF_RDMAVTPD_H */

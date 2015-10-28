@@ -102,7 +102,7 @@ static int init_sge(struct hfi1_qp *qp, struct hfi1_rwqe *wqe)
 	int i, j, ret;
 	struct ib_wc wc;
 	struct hfi1_lkey_table *rkt;
-	struct hfi1_pd *pd;
+	struct rvt_pd *pd;
 	struct hfi1_sge_state *ss;
 
 	rkt = &to_idev(qp->ibqp.device)->lk_table;

@@ -52,6 +52,8 @@
  */
 
 #include <rdma/rdma_vt.h>
+#include "dma.h"
+#include "pd.h"
 
 struct rvt_dev_data {
 	void *driver_priv;
@@ -61,7 +63,5 @@ struct rvt_priv {
 	spinlock_t l_lock; /* Locks the dev list */
 	struct list_head dev_list;
 };
-
-extern struct ib_dma_mapping_ops rvt_default_dma_mapping_ops;
 
 #endif          /* DEF_RDMAVT_H */

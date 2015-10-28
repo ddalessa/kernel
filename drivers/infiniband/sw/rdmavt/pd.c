@@ -48,69 +48,60 @@
  *
  */
 
-#include <linux/module.h>
-#include <linux/kernel.h>
-#include "vt.h"
+#include <linux/slab.h>
+#include "pd.h"
 
-#define RDMAVT_DRIVER_VERSION "0.1"
-
-MODULE_LICENSE("Dual BSD/GPL");
-MODULE_DESCRIPTION("RDMA Verbs Transport Library");
-MODULE_VERSION(RDMAVT_DRIVER_VERSION);
-
-static struct rvt_priv rv;
-
-static int rvt_init(void)
+struct ib_pd *rvt_alloc_pd(struct ib_device *ibdev,
+			   struct ib_ucontext *context,
+			   struct ib_udata *udata)
 {
-	/* Set up misc supporting data structures */
-	INIT_LIST_HEAD(&rv.dev_list);
-	spin_lock_init(&rv.l_lock);
+	struct rvt_dev_info *dev = ib_to_rvt(ibdev);
+	struct rvt_pd *pd;
+	struct ib_pd *ret;
+
+	/*
+	 * This is actually totally arbitrary.  Some correctness tests
+	 * assume there's a maximum number of PDs that can be allocated.
+	 * We don't actually have this limit, but we fail the test if
+	 * we allow allocations of more than we report for this value.
+	 */
+
+	pd = kmalloc(sizeof(*pd), GFP_KERNEL);
+	if (!pd) {
+		ret = ERR_PTR(-ENOMEM);
+		goto bail;
+	}
+
+	spin_lock(&dev->n_pds_lock);
+	if (dev->n_pds_allocated == dev->dparms.max_pds) {
+		spin_unlock(&dev->n_pds_lock);
+		kfree(pd);
+		ret = ERR_PTR(-ENOMEM);
+		goto bail;
+	}
+
+	dev->n_pds_allocated++;
+	spin_unlock(&dev->n_pds_lock);
+
+	/* ib_alloc_pd() will initialize pd->ibpd. */
+	pd->user = udata ? 1 : 0;
+
+	ret = &pd->ibpd;
+
+bail:
+	return ret;
+}
+
+int rvt_dealloc_pd(struct ib_pd *ibpd)
+{
+	struct rvt_pd *pd = to_ipd(ibpd);
+	struct rvt_dev_info *dev = ib_to_rvt(ibpd->device);
+
+	spin_lock(&dev->n_pds_lock);
+	dev->n_pds_allocated--;
+	spin_unlock(&dev->n_pds_lock);
+
+	kfree(pd);
 
 	return 0;
 }
-module_init(rvt_init);
-
-static void rvt_cleanup(void)
-{
-}
-module_exit(rvt_cleanup);
-
-int rvt_register_device(struct rvt_dev_info *rdi)
-{
-	if (!rdi)
-		return -EINVAL;
-
-	/*
-	 * Drivers have the option to override anything in the ibdev that they
-	 * want to specifically handle. VT needs to check for things it supports
-	 * and if the driver wants to handle that functionality let it. We may
-	 * come up with a better mechanism that simplifies the code at some
-	 * point.
-	 */
-
-	/* DMA Operations */
-	rdi->ibdev.dma_ops =
-		rdi->ibdev.dma_ops ? : &rvt_default_dma_mapping_ops;
-
-	/* Protection Domain */
-	rdi->ibdev.alloc_pd =
-		rdi->ibdev.alloc_pd ? : rvt_alloc_pd;
-	rdi->ibdev.dealloc_pd =
-		rdi->ibdev.dealloc_pd ? : rvt_dealloc_pd;
-
-	spin_lock_init(&rdi->n_pds_lock);
-	rdi->n_pds_allocated = 0;
-
-	/* We are now good to announce we exist */
-	return ib_register_device(&rdi->ibdev, rdi->port_callback);
-}
-EXPORT_SYMBOL(rvt_register_device);
-
-void rvt_unregister_device(struct rvt_dev_info *rdi)
-{
-	if (!rdi)
-		return;
-
-	ib_unregister_device(&rdi->ibdev);
-}
-EXPORT_SYMBOL(rvt_unregister_device);

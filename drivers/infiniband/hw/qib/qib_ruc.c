@@ -84,7 +84,7 @@ static int qib_init_sge(struct qib_qp *qp, struct qib_rwqe *wqe)
 	int i, j, ret;
 	struct ib_wc wc;
 	struct qib_lkey_table *rkt;
-	struct qib_pd *pd;
+	struct rvt_pd *pd;
 	struct qib_sge_state *ss;
 
 	rkt = &to_idev(qp->ibqp.device)->lk_table;
