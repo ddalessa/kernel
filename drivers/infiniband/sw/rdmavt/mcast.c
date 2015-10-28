@@ -1,6 +1,3 @@
-#ifndef DEF_RDMAVT_H
-#define DEF_RDMAVT_H
-
 /*
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
@@ -51,23 +48,14 @@
  *
  */
 
-#include <rdma/rdma_vt.h>
-#include "dma.h"
-#include "pd.h"
-
-#include "qp.h"
-#include "ah.h"
-#include "mr.h"
-#include "srq.h"
 #include "mcast.h"
 
-struct rvt_dev_data {
-	void *driver_priv;
-};
+int rvt_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
+{
+	return -EINVAL;
+}
 
-struct rvt_priv {
-	spinlock_t l_lock; /* Locks the dev list */
-	struct list_head dev_list;
-};
-
-#endif          /* DEF_RDMAVT_H */
+int rvt_detach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
+{
+	return -EINVAL;
+}

@@ -1,5 +1,5 @@
-#ifndef DEF_RDMAVT_H
-#define DEF_RDMAVT_H
+#ifndef DEF_RVTMCAST_H
+#define DEF_RVTMCAST_H
 
 /*
  *
@@ -52,22 +52,8 @@
  */
 
 #include <rdma/rdma_vt.h>
-#include "dma.h"
-#include "pd.h"
 
-#include "qp.h"
-#include "ah.h"
-#include "mr.h"
-#include "srq.h"
-#include "mcast.h"
+int rvt_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid);
+int rvt_detach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid);
 
-struct rvt_dev_data {
-	void *driver_priv;
-};
-
-struct rvt_priv {
-	spinlock_t l_lock; /* Locks the dev list */
-	struct list_head dev_list;
-};
-
-#endif          /* DEF_RDMAVT_H */
+#endif          /* DEF_RVTMCAST_H */
