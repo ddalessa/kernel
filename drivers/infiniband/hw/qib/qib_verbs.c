@@ -1583,7 +1583,7 @@ static int qib_query_device(struct ib_device *ibdev, struct ib_device_attr *prop
 	props->max_mr = dev->lk_table.max;
 	props->max_fmr = dev->lk_table.max;
 	props->max_map_per_fmr = 32767;
-	props->max_pd = ib_qib_max_pds;
+	props->max_pd = dev->rdi.dparms.props.max_pd;
 	props->max_qp_rd_atom = QIB_MAX_RDMA_ATOMIC;
 	props->max_qp_init_rd_atom = 255;
 	/* props->max_res_rd_atom */
@@ -2209,7 +2209,7 @@ int qib_register_ib_device(struct qib_devdata *dd)
 	 * Fill in rvt info object.
 	 */
 	dd->verbs_dev.rdi.port_callback = qib_create_port_files;
-	dd->verbs_dev.rdi.dparms.max_pds = ib_qib_max_pds;
+	dd->verbs_dev.rdi.dparms.props.max_pd = ib_qib_max_pds;
 
 
 	ret = rvt_register_device(&dd->verbs_dev.rdi);
