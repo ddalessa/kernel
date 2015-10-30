@@ -50,8 +50,8 @@ static unsigned int ib_qib_qp_table_size = 256;
 module_param_named(qp_table_size, ib_qib_qp_table_size, uint, S_IRUGO);
 MODULE_PARM_DESC(qp_table_size, "QP table size");
 
-unsigned int ib_qib_lkey_table_size = 16;
-module_param_named(lkey_table_size, ib_qib_lkey_table_size, uint,
+unsigned int ib_rvt_lkey_table_size = 16;
+module_param_named(lkey_table_size, ib_rvt_lkey_table_size, uint,
 		   S_IRUGO);
 MODULE_PARM_DESC(lkey_table_size,
 		 "LKEY table size in bits (2^n, 1 <= n <= 23)");
@@ -189,7 +189,7 @@ void qib_copy_sge(struct qib_sge_state *ss, void *data, u32 length, int release)
 			if (--ss->num_sge)
 				*sge = *ss->sg_list++;
 		} else if (sge->length == 0 && sge->mr->lkey) {
-			if (++sge->n >= QIB_SEGSZ) {
+			if (++sge->n >= RVT_SEGSZ) {
 				if (++sge->m >= sge->mr->mapsz)
 					break;
 				sge->n = 0;
@@ -230,7 +230,7 @@ void qib_skip_sge(struct qib_sge_state *ss, u32 length, int release)
 			if (--ss->num_sge)
 				*sge = *ss->sg_list++;
 		} else if (sge->length == 0 && sge->mr->lkey) {
-			if (++sge->n >= QIB_SEGSZ) {
+			if (++sge->n >= RVT_SEGSZ) {
 				if (++sge->m >= sge->mr->mapsz)
 					break;
 				sge->n = 0;
@@ -277,7 +277,7 @@ static u32 qib_count_sge(struct qib_sge_state *ss, u32 length)
 			if (--num_sge)
 				sge = *sg_list++;
 		} else if (sge.length == 0 && sge.mr->lkey) {
-			if (++sge.n >= QIB_SEGSZ) {
+			if (++sge.n >= RVT_SEGSZ) {
 				if (++sge.m >= sge.mr->mapsz)
 					break;
 				sge.n = 0;
@@ -315,7 +315,7 @@ static void qib_copy_from_sge(void *data, struct qib_sge_state *ss, u32 length)
 			if (--ss->num_sge)
 				*sge = *ss->sg_list++;
 		} else if (sge->length == 0 && sge->mr->lkey) {
-			if (++sge->n >= QIB_SEGSZ) {
+			if (++sge->n >= RVT_SEGSZ) {
 				if (++sge->m >= sge->mr->mapsz)
 					break;
 				sge->n = 0;
@@ -345,7 +345,7 @@ static int qib_post_one_send(struct qib_qp *qp, struct ib_send_wr *wr,
 	int acc;
 	int ret;
 	unsigned long flags;
-	struct qib_lkey_table *rkt;
+	struct rvt_lkey_table *rkt;
 	struct rvt_pd *pd;
 
 	spin_lock_irqsave(&qp->s_lock, flags);
@@ -744,7 +744,7 @@ static void update_sge(struct qib_sge_state *ss, u32 length)
 		if (--ss->num_sge)
 			*sge = *ss->sg_list++;
 	} else if (sge->length == 0 && sge->mr->lkey) {
-		if (++sge->n >= QIB_SEGSZ) {
+		if (++sge->n >= RVT_SEGSZ) {
 			if (++sge->m >= sge->mr->mapsz)
 				return;
 			sge->n = 0;
@@ -2051,20 +2051,20 @@ int qib_register_ib_device(struct qib_devdata *dd)
 	qib_init_qpn_table(dd, &dev->qpn_table);
 
 	/*
-	 * The top ib_qib_lkey_table_size bits are used to index the
+	 * The top ib_rvt_lkey_table_size bits are used to index the
 	 * table.  The lower 8 bits can be owned by the user (copied from
 	 * the LKEY).  The remaining bits act as a generation number or tag.
 	 */
 	spin_lock_init(&dev->lk_table.lock);
 	/* insure generation is at least 4 bits see keys.c */
-	if (ib_qib_lkey_table_size > MAX_LKEY_TABLE_BITS) {
+	if (ib_rvt_lkey_table_size > RVT_MAX_LKEY_TABLE_BITS) {
 		qib_dev_warn(dd, "lkey bits %u too large, reduced to %u\n",
-			ib_qib_lkey_table_size, MAX_LKEY_TABLE_BITS);
-		ib_qib_lkey_table_size = MAX_LKEY_TABLE_BITS;
+			ib_rvt_lkey_table_size, RVT_MAX_LKEY_TABLE_BITS);
+		ib_rvt_lkey_table_size = RVT_MAX_LKEY_TABLE_BITS;
 	}
-	dev->lk_table.max = 1 << ib_qib_lkey_table_size;
+	dev->lk_table.max = 1 << ib_rvt_lkey_table_size;
 	lk_tab_size = dev->lk_table.max * sizeof(*dev->lk_table.table);
-	dev->lk_table.table = (struct qib_mregion __rcu **)
+	dev->lk_table.table = (struct rvt_mregion __rcu **)
 		vmalloc(lk_tab_size);
 	if (dev->lk_table.table == NULL) {
 		ret = -ENOMEM;

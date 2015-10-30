@@ -265,7 +265,7 @@ struct qib_verbs_txreq {
 	u16                     hdr_dwords;
 	u16                     hdr_inx;
 	struct qib_pio_header	*align_buf;
-	struct qib_mregion	*mr;
+	struct rvt_mregion	*mr;
 	struct qib_sge_state    *ss;
 };
 

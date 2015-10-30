@@ -189,7 +189,7 @@ static void qib_ud_loopback(struct qib_qp *sqp, struct qib_swqe *swqe)
 			if (--ssge.num_sge)
 				*sge = *ssge.sg_list++;
 		} else if (sge->length == 0 && sge->mr->lkey) {
-			if (++sge->n >= QIB_SEGSZ) {
+			if (++sge->n >= RVT_SEGSZ) {
 				if (++sge->m >= sge->mr->mapsz)
 					break;
 				sge->n = 0;

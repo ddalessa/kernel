@@ -83,7 +83,7 @@ static int qib_init_sge(struct qib_qp *qp, struct qib_rwqe *wqe)
 {
 	int i, j, ret;
 	struct ib_wc wc;
-	struct qib_lkey_table *rkt;
+	struct rvt_lkey_table *rkt;
 	struct rvt_pd *pd;
 	struct qib_sge_state *ss;
 
@@ -530,7 +530,7 @@ again:
 			if (--sqp->s_sge.num_sge)
 				*sge = *sqp->s_sge.sg_list++;
 		} else if (sge->length == 0 && sge->mr->lkey) {
-			if (++sge->n >= QIB_SEGSZ) {
+			if (++sge->n >= RVT_SEGSZ) {
 				if (++sge->m >= sge->mr->mapsz)
 					break;
 				sge->n = 0;
