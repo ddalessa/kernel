@@ -271,11 +271,11 @@ __be64 ib_hfi1_sys_image_guid;
  * @length: the length of the data
  */
 void hfi1_copy_sge(
-	struct hfi1_sge_state *ss,
+	struct rvt_sge_state *ss,
 	void *data, u32 length,
 	int release)
 {
-	struct hfi1_sge *sge = &ss->sge;
+	struct rvt_sge *sge = &ss->sge;
 
 	while (length) {
 		u32 len = sge->length;
@@ -315,9 +315,9 @@ void hfi1_copy_sge(
  * @ss: the SGE state
  * @length: the number of bytes to skip
  */
-void hfi1_skip_sge(struct hfi1_sge_state *ss, u32 length, int release)
+void hfi1_skip_sge(struct rvt_sge_state *ss, u32 length, int release)
 {
-	struct hfi1_sge *sge = &ss->sge;
+	struct rvt_sge *sge = &ss->sge;
 
 	while (length) {
 		u32 len = sge->length;
@@ -355,9 +355,9 @@ void hfi1_skip_sge(struct hfi1_sge_state *ss, u32 length, int release)
  * @qp: the QP to post on
  * @wr: the work request to send
  */
-static int post_one_send(struct hfi1_qp *qp, struct ib_send_wr *wr)
+static int post_one_send(struct rvt_qp *qp, struct ib_send_wr *wr)
 {
-	struct hfi1_swqe *wqe;
+	struct rvt_swqe *wqe;
 	u32 next;
 	int i;
 	int j;
@@ -450,7 +450,7 @@ static int post_one_send(struct hfi1_qp *qp, struct ib_send_wr *wr)
 bail_inval_free:
 	/* release mr holds */
 	while (j) {
-		struct hfi1_sge *sge = &wqe->sg_list[--j];
+		struct rvt_sge *sge = &wqe->sg_list[--j];
 
 		hfi1_put_mr(sge->mr);
 	}
@@ -468,7 +468,7 @@ bail_inval_free:
 static int post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
 		     struct ib_send_wr **bad_wr)
 {
-	struct hfi1_qp *qp = to_iqp(ibqp);
+	struct rvt_qp *qp = to_iqp(ibqp);
 	struct hfi1_qp_priv *priv = qp->priv;
 	int err = 0;
 	int call_send;
@@ -514,8 +514,8 @@ bail:
 static int post_receive(struct ib_qp *ibqp, struct ib_recv_wr *wr,
 			struct ib_recv_wr **bad_wr)
 {
-	struct hfi1_qp *qp = to_iqp(ibqp);
-	struct hfi1_rwq *wq = qp->r_rq.wq;
+	struct rvt_qp *qp = to_iqp(ibqp);
+	struct rvt_rwq *wq = qp->r_rq.wq;
 	unsigned long flags;
 	int ret;
 
@@ -527,7 +527,7 @@ static int post_receive(struct ib_qp *ibqp, struct ib_recv_wr *wr,
 	}
 
 	for (; wr; wr = wr->next) {
-		struct hfi1_rwqe *wqe;
+		struct rvt_rwqe *wqe;
 		u32 next;
 		int i;
 
@@ -678,7 +678,7 @@ static void mem_timer(unsigned long data)
 {
 	struct hfi1_ibdev *dev = (struct hfi1_ibdev *)data;
 	struct list_head *list = &dev->memwait;
-	struct hfi1_qp *qp = NULL;
+	struct rvt_qp *qp = NULL;
 	struct iowait *wait;
 	unsigned long flags;
 	struct hfi1_qp_priv *priv;
@@ -699,9 +699,9 @@ static void mem_timer(unsigned long data)
 		hfi1_qp_wakeup(qp, HFI1_S_WAIT_KMEM);
 }
 
-void update_sge(struct hfi1_sge_state *ss, u32 length)
+void update_sge(struct rvt_sge_state *ss, u32 length)
 {
-	struct hfi1_sge *sge = &ss->sge;
+	struct rvt_sge *sge = &ss->sge;
 
 	sge->vaddr += length;
 	sge->length -= length;
@@ -721,7 +721,7 @@ void update_sge(struct hfi1_sge_state *ss, u32 length)
 }
 
 static noinline struct verbs_txreq *__get_txreq(struct hfi1_ibdev *dev,
-						struct hfi1_qp *qp)
+						struct rvt_qp *qp)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 	struct verbs_txreq *tx;
@@ -748,7 +748,7 @@ static noinline struct verbs_txreq *__get_txreq(struct hfi1_ibdev *dev,
 }
 
 static inline struct verbs_txreq *get_txreq(struct hfi1_ibdev *dev,
-					    struct hfi1_qp *qp)
+					    struct rvt_qp *qp)
 {
 	struct verbs_txreq *tx;
 
@@ -766,7 +766,7 @@ static inline struct verbs_txreq *get_txreq(struct hfi1_ibdev *dev,
 void hfi1_put_txreq(struct verbs_txreq *tx)
 {
 	struct hfi1_ibdev *dev;
-	struct hfi1_qp *qp;
+	struct rvt_qp *qp;
 	unsigned long flags;
 	unsigned int seq;
 	struct hfi1_qp_priv *priv;
@@ -814,7 +814,7 @@ static void verbs_sdma_complete(
 {
 	struct verbs_txreq *tx =
 		container_of(cookie, struct verbs_txreq, txreq);
-	struct hfi1_qp *qp = tx->qp;
+	struct rvt_qp *qp = tx->qp;
 
 	spin_lock(&qp->s_lock);
 	if (tx->wqe)
@@ -842,7 +842,7 @@ static void verbs_sdma_complete(
 	hfi1_put_txreq(tx);
 }
 
-static int wait_kmem(struct hfi1_ibdev *dev, struct hfi1_qp *qp)
+static int wait_kmem(struct hfi1_ibdev *dev, struct rvt_qp *qp)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 	unsigned long flags;
@@ -875,12 +875,12 @@ static int wait_kmem(struct hfi1_ibdev *dev, struct hfi1_qp *qp)
  */
 static int build_verbs_ulp_payload(
 	struct sdma_engine *sde,
-	struct hfi1_sge_state *ss,
+	struct rvt_sge_state *ss,
 	u32 length,
 	struct verbs_txreq *tx)
 {
-	struct hfi1_sge *sg_list = ss->sg_list;
-	struct hfi1_sge sge = ss->sge;
+	struct rvt_sge *sg_list = ss->sg_list;
+	struct rvt_sge sge = ss->sge;
 	u8 num_sge = ss->num_sge;
 	u32 len;
 	int ret = 0;
@@ -923,7 +923,7 @@ bail_txadd:
 /* New API */
 static int build_verbs_tx_desc(
 	struct sdma_engine *sde,
-	struct hfi1_sge_state *ss,
+	struct rvt_sge_state *ss,
 	u32 length,
 	struct verbs_txreq *tx,
 	struct ahg_ib_header *ahdr,
@@ -990,8 +990,8 @@ bail_txadd:
 	return ret;
 }
 
-int hfi1_verbs_send_dma(struct hfi1_qp *qp, struct ahg_ib_header *ahdr,
-			u32 hdrwords, struct hfi1_sge_state *ss, u32 len,
+int hfi1_verbs_send_dma(struct rvt_qp *qp, struct ahg_ib_header *ahdr,
+			u32 hdrwords, struct rvt_sge_state *ss, u32 len,
 			u32 plen, u32 dwords, u64 pbc)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
@@ -1070,7 +1070,7 @@ bail_tx:
  * If we are now in the error state, return zero to flush the
  * send work request.
  */
-static int no_bufs_available(struct hfi1_qp *qp, struct send_context *sc)
+static int no_bufs_available(struct rvt_qp *qp, struct send_context *sc)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 	struct hfi1_devdata *dd = sc->dd;
@@ -1109,7 +1109,7 @@ static int no_bufs_available(struct hfi1_qp *qp, struct send_context *sc)
 	return ret;
 }
 
-struct send_context *qp_to_send_context(struct hfi1_qp *qp, u8 sc5)
+struct send_context *qp_to_send_context(struct rvt_qp *qp, u8 sc5)
 {
 	struct hfi1_devdata *dd = dd_from_ibdev(qp->ibqp.device);
 	struct hfi1_pportdata *ppd = dd->pport + (qp->port_num - 1);
@@ -1121,8 +1121,8 @@ struct send_context *qp_to_send_context(struct hfi1_qp *qp, u8 sc5)
 	return dd->vld[vl].sc;
 }
 
-int hfi1_verbs_send_pio(struct hfi1_qp *qp, struct ahg_ib_header *ahdr,
-			u32 hdrwords, struct hfi1_sge_state *ss, u32 len,
+int hfi1_verbs_send_pio(struct rvt_qp *qp, struct ahg_ib_header *ahdr,
+			u32 hdrwords, struct rvt_sge_state *ss, u32 len,
 			u32 plen, u32 dwords, u64 pbc)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
@@ -1241,7 +1241,7 @@ static inline int egress_pkey_matches_entry(u16 pkey, u16 ent)
  */
 static inline int egress_pkey_check(struct hfi1_pportdata *ppd,
 				    struct hfi1_ib_header *hdr,
-				    struct hfi1_qp *qp)
+				    struct rvt_qp *qp)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 	struct hfi1_other_headers *ohdr;
@@ -1307,8 +1307,8 @@ bad:
  * Return zero if packet is sent or queued OK.
  * Return non-zero and clear qp->s_flags HFI1_S_BUSY otherwise.
  */
-int hfi1_verbs_send(struct hfi1_qp *qp, struct ahg_ib_header *ahdr,
-		    u32 hdrwords, struct hfi1_sge_state *ss, u32 len)
+int hfi1_verbs_send(struct rvt_qp *qp, struct ahg_ib_header *ahdr,
+		    u32 hdrwords, struct rvt_sge_state *ss, u32 len)
 {
 	struct hfi1_devdata *dd = dd_from_ibdev(qp->ibqp.device);
 	u32 plen;
@@ -1697,7 +1697,7 @@ struct ib_ah *hfi1_create_qp0_ah(struct hfi1_ibport *ibp, u16 dlid)
 {
 	struct ib_ah_attr attr;
 	struct ib_ah *ah = ERR_PTR(-EINVAL);
-	struct hfi1_qp *qp0;
+	struct rvt_qp *qp0;
 
 	memset(&attr, 0, sizeof(attr));
 	attr.dlid = dlid;
@@ -2084,7 +2084,7 @@ void hfi1_unregister_ib_device(struct hfi1_devdata *dd)
 /*
  * This must be called with s_lock held.
  */
-void hfi1_schedule_send(struct hfi1_qp *qp)
+void hfi1_schedule_send(struct rvt_qp *qp)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 	if (hfi1_send_ok(qp)) {

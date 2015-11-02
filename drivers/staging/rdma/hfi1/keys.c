@@ -177,7 +177,7 @@ out:
  * of it.
  */
 int hfi1_lkey_ok(struct rvt_lkey_table *rkt, struct rvt_pd *pd,
-		 struct hfi1_sge *isge, struct ib_sge *sge, int acc)
+		 struct rvt_sge *isge, struct ib_sge *sge, int acc)
 {
 	struct rvt_mregion *mr;
 	unsigned n, m;
@@ -271,7 +271,7 @@ bail:
  *
  * increments the reference count upon success
  */
-int hfi1_rkey_ok(struct hfi1_qp *qp, struct hfi1_sge *sge,
+int hfi1_rkey_ok(struct rvt_qp *qp, struct rvt_sge *sge,
 		 u32 len, u64 vaddr, u32 rkey, int acc)
 {
 	struct rvt_lkey_table *rkt = &to_idev(qp->ibqp.device)->lk_table;
@@ -358,7 +358,7 @@ bail:
 /*
  * Initialize the memory region specified by the work request.
  */
-int hfi1_fast_reg_mr(struct hfi1_qp *qp, struct ib_send_wr *wr)
+int hfi1_fast_reg_mr(struct rvt_qp *qp, struct ib_send_wr *wr)
 {
 	struct rvt_lkey_table *rkt = &to_idev(qp->ibqp.device)->lk_table;
 	struct rvt_pd *pd = to_ipd(qp->ibqp.pd);

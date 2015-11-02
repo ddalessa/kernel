@@ -222,7 +222,7 @@ struct tx_pio_header {
  */
 struct hfi1_mcast_qp {
 	struct list_head list;
-	struct hfi1_qp *qp;
+	struct rvt_qp *qp;
 };
 
 struct hfi1_mcast {
@@ -239,20 +239,6 @@ struct hfi1_ah {
 	struct ib_ah ibah;
 	struct ib_ah_attr attr;
 	atomic_t refcount;
-};
-
-/*
- * This structure is used by hfi1_mmap() to validate an offset
- * when an mmap() request is made.  The vm_area_struct then uses
- * this as its vm_private_data.
- */
-struct hfi1_mmap_info {
-	struct list_head pending_mmaps;
-	struct ib_ucontext *context;
-	void *obj;
-	__u64 offset;
-	struct kref ref;
-	unsigned size;
 };
 
 /*
@@ -281,20 +267,7 @@ struct hfi1_cq {
 	u8 notify;
 	u8 triggered;
 	struct hfi1_cq_wc *queue;
-	struct hfi1_mmap_info *ip;
-};
-
-/*
- * These keep track of the copy progress within a memory region.
- * Used by the verbs layer.
- */
-struct hfi1_sge {
-	struct rvt_mregion *mr;
-	void *vaddr;            /* kernel virtual address of segment */
-	u32 sge_length;         /* length of the SGE */
-	u32 length;             /* remaining length of the segment */
-	u16 m;                  /* current index: mr->map[m] */
-	u16 n;                  /* current index: mr->map[m]->segs[n] */
+	struct rvt_mmap_info *ip;
 };
 
 /* Memory region */
@@ -304,209 +277,24 @@ struct hfi1_mr {
 	struct rvt_mregion mr;  /* must be last */
 };
 
-/*
- * Send work request queue entry.
- * The size of the sg_list is determined when the QP is created and stored
- * in qp->s_max_sge.
- */
-struct hfi1_swqe {
-	struct ib_send_wr wr;   /* don't use wr.sg_list */
-	u32 psn;                /* first packet sequence number */
-	u32 lpsn;               /* last packet sequence number */
-	u32 ssn;                /* send sequence number */
-	u32 length;             /* total length of data in sg_list */
-	struct hfi1_sge sg_list[0];
-};
-
-/*
- * Receive work request queue entry.
- * The size of the sg_list is determined when the QP (or SRQ) is created
- * and stored in qp->r_rq.max_sge (or srq->rq.max_sge).
- */
-struct hfi1_rwqe {
-	u64 wr_id;
-	u8 num_sge;
-	struct ib_sge sg_list[0];
-};
-
-/*
- * This structure is used to contain the head pointer, tail pointer,
- * and receive work queue entries as a single memory allocation so
- * it can be mmap'ed into user space.
- * Note that the wq array elements are variable size so you can't
- * just index into the array to get the N'th element;
- * use get_rwqe_ptr() instead.
- */
-struct hfi1_rwq {
-	u32 head;               /* new work requests posted to the head */
-	u32 tail;               /* receives pull requests from here. */
-	struct hfi1_rwqe wq[0];
-};
-
-struct hfi1_rq {
-	struct hfi1_rwq *wq;
-	u32 size;               /* size of RWQE array */
-	u8 max_sge;
-	/* protect changes in this struct */
-	spinlock_t lock ____cacheline_aligned_in_smp;
-};
 
 struct hfi1_srq {
 	struct ib_srq ibsrq;
-	struct hfi1_rq rq;
-	struct hfi1_mmap_info *ip;
+	struct rvt_rq rq;
+	struct rvt_mmap_info *ip;
 	/* send signal when number of RWQEs < limit */
 	u32 limit;
-};
-
-struct hfi1_sge_state {
-	struct hfi1_sge *sg_list;      /* next SGE to be used if any */
-	struct hfi1_sge sge;   /* progress state for the current SGE */
-	u32 total_len;
-	u8 num_sge;
-};
-
-/*
- * This structure holds the information that the send tasklet needs
- * to send a RDMA read response or atomic operation.
- */
-struct hfi1_ack_entry {
-	u8 opcode;
-	u8 sent;
-	u32 psn;
-	u32 lpsn;
-	union {
-		struct hfi1_sge rdma_sge;
-		u64 atomic_data;
-	};
 };
 
 /*
  * hfi1 specific data structures that will be hidden from rvt after the queue
  * pair is made common
  */
-struct hfi1_qp;
 struct hfi1_qp_priv {
 	struct ahg_ib_header *s_hdr; /* next packet header to send */
 	u8 s_sc;		     /* SC[0..4] for next packet */
 	struct iowait s_iowait;
-	struct hfi1_qp *owner;
-};
-
-/*
- * Variables prefixed with s_ are for the requester (sender).
- * Variables prefixed with r_ are for the responder (receiver).
- * Variables prefixed with ack_ are for responder replies.
- *
- * Common variables are protected by both r_rq.lock and s_lock in that order
- * which only happens in modify_qp() or changing the QP 'state'.
- */
-struct hfi1_qp {
-	struct ib_qp ibqp;
-	void *priv;
-	/* read mostly fields above and below */
-	struct ib_ah_attr remote_ah_attr;
-	struct ib_ah_attr alt_ah_attr;
-	struct hfi1_qp __rcu *next;           /* link list for QPN hash table */
-	struct hfi1_swqe *s_wq;  /* send work queue */
-	struct hfi1_mmap_info *ip;
-	unsigned long timeout_jiffies;  /* computed from timeout */
-
-	enum ib_mtu path_mtu;
-	int srate_mbps;		/* s_srate (below) converted to Mbit/s */
-	u32 remote_qpn;
-	u32 pmtu;		/* decoded from path_mtu */
-	u32 qkey;               /* QKEY for this QP (for UD or RD) */
-	u32 s_size;             /* send work queue size */
-	u32 s_rnr_timeout;      /* number of milliseconds for RNR timeout */
-	u32 s_ahgpsn;           /* set to the psn in the copy of the header */
-
-	u8 state;               /* QP state */
-	u8 allowed_ops;		/* high order bits of allowed opcodes */
-	u8 qp_access_flags;
-	u8 alt_timeout;         /* Alternate path timeout for this QP */
-	u8 timeout;             /* Timeout for this QP */
-	u8 s_srate;
-	u8 s_mig_state;
-	u8 port_num;
-	u8 s_pkey_index;        /* PKEY index to use */
-	u8 s_alt_pkey_index;    /* Alternate path PKEY index to use */
-	u8 r_max_rd_atomic;     /* max number of RDMA read/atomic to receive */
-	u8 s_max_rd_atomic;     /* max number of RDMA read/atomic to send */
-	u8 s_retry_cnt;         /* number of times to retry */
-	u8 s_rnr_retry_cnt;
-	u8 r_min_rnr_timer;     /* retry timeout value for RNR NAKs */
-	u8 s_max_sge;           /* size of s_wq->sg_list */
-	u8 s_draining;
-
-	/* start of read/write fields */
-	atomic_t refcount ____cacheline_aligned_in_smp;
-	wait_queue_head_t wait;
-
-
-	struct hfi1_ack_entry s_ack_queue[HFI1_MAX_RDMA_ATOMIC + 1]
-		____cacheline_aligned_in_smp;
-	struct hfi1_sge_state s_rdma_read_sge;
-
-	spinlock_t r_lock ____cacheline_aligned_in_smp;      /* used for APM */
-	unsigned long r_aflags;
-	u64 r_wr_id;            /* ID for current receive WQE */
-	u32 r_ack_psn;          /* PSN for next ACK or atomic ACK */
-	u32 r_len;              /* total length of r_sge */
-	u32 r_rcv_len;          /* receive data len processed */
-	u32 r_psn;              /* expected rcv packet sequence number */
-	u32 r_msn;              /* message sequence number */
-
-	u8 r_state;             /* opcode of last packet received */
-	u8 r_flags;
-	u8 r_head_ack_queue;    /* index into s_ack_queue[] */
-
-	struct list_head rspwait;       /* link for waiting to respond */
-
-	struct hfi1_sge_state r_sge;     /* current receive data */
-	struct hfi1_rq r_rq;             /* receive work queue */
-
-	spinlock_t s_lock ____cacheline_aligned_in_smp;
-	struct hfi1_sge_state *s_cur_sge;
-	u32 s_flags;
-	struct hfi1_swqe *s_wqe;
-	struct hfi1_sge_state s_sge;     /* current send request data */
-	struct rvt_mregion *s_rdma_mr;
-	struct sdma_engine *s_sde; /* current sde */
-	u32 s_cur_size;         /* size of send packet in bytes */
-	u32 s_len;              /* total length of s_sge */
-	u32 s_rdma_read_len;    /* total length of s_rdma_read_sge */
-	u32 s_next_psn;         /* PSN for next request */
-	u32 s_last_psn;         /* last response PSN processed */
-	u32 s_sending_psn;      /* lowest PSN that is being sent */
-	u32 s_sending_hpsn;     /* highest PSN that is being sent */
-	u32 s_psn;              /* current packet sequence number */
-	u32 s_ack_rdma_psn;     /* PSN for sending RDMA read responses */
-	u32 s_ack_psn;          /* PSN for acking sends and RDMA writes */
-	u32 s_head;             /* new entries added here */
-	u32 s_tail;             /* next entry to process */
-	u32 s_cur;              /* current work queue entry */
-	u32 s_acked;            /* last un-ACK'ed entry */
-	u32 s_last;             /* last completed entry */
-	u32 s_ssn;              /* SSN of tail entry */
-	u32 s_lsn;              /* limit sequence number (credit) */
-	u16 s_hdrwords;         /* size of s_hdr in 32 bit words */
-	u16 s_rdma_ack_cnt;
-	s8 s_ahgidx;
-	u8 s_state;             /* opcode of last packet sent */
-	u8 s_ack_state;         /* opcode of packet to ACK */
-	u8 s_nak_state;         /* non-zero if NAK is pending */
-	u8 r_nak_state;         /* non-zero if NAK is pending */
-	u8 s_retry;             /* requester retry counter */
-	u8 s_rnr_retry;         /* requester RNR retry counter */
-	u8 s_num_rd_atomic;     /* number of RDMA read/atomic pending */
-	u8 s_tail_ack_queue;    /* index into s_ack_queue[] */
-
-	struct hfi1_sge_state s_ack_rdma_sge;
-	struct timer_list s_timer;
-
-	struct hfi1_sge r_sg_list[0] /* verified SGEs */
-		____cacheline_aligned_in_smp;
+	struct rvt_qp *owner;
 };
 
 /*
@@ -588,27 +376,27 @@ struct hfi1_qp {
 #define HFI1_PSN_CREDIT  16
 
 /*
- * Since struct hfi1_swqe is not a fixed size, we can't simply index into
+ * Since struct rvt_swqe is not a fixed size, we can't simply index into
  * struct hfi1_qp.s_wq.  This function does the array index computation.
  */
-static inline struct hfi1_swqe *get_swqe_ptr(struct hfi1_qp *qp,
-					     unsigned n)
+static inline struct rvt_swqe *get_swqe_ptr(struct rvt_qp *qp,
+					    unsigned n)
 {
-	return (struct hfi1_swqe *)((char *)qp->s_wq +
-				     (sizeof(struct hfi1_swqe) +
+	return (struct rvt_swqe *)((char *)qp->s_wq +
+				     (sizeof(struct rvt_swqe) +
 				      qp->s_max_sge *
-				      sizeof(struct hfi1_sge)) * n);
+				      sizeof(struct rvt_sge)) * n);
 }
 
 /*
- * Since struct hfi1_rwqe is not a fixed size, we can't simply index into
- * struct hfi1_rwq.wq.  This function does the array index computation.
+ * Since struct rvt_rwqe is not a fixed size, we can't simply index into
+ * struct rvt_rwq.wq.  This function does the array index computation.
  */
-static inline struct hfi1_rwqe *get_rwqe_ptr(struct hfi1_rq *rq, unsigned n)
+static inline struct rvt_rwqe *get_rwqe_ptr(struct rvt_rq *rq, unsigned n)
 {
-	return (struct hfi1_rwqe *)
+	return (struct rvt_rwqe *)
 		((char *) rq->wq->wq +
-		 (sizeof(struct hfi1_rwqe) +
+		 (sizeof(struct rvt_rwqe) +
 		  rq->max_sge * sizeof(struct ib_sge)) * n);
 }
 
@@ -632,7 +420,7 @@ static inline void inc_opstats(
 }
 
 struct hfi1_ibport {
-	struct hfi1_qp __rcu *qp[2];
+	struct rvt_qp __rcu *qp[2];
 	struct ib_mad_agent *send_agent;	/* agent for SMI (traps) */
 	struct hfi1_ah *sm_ah;
 	struct hfi1_ah *smi_ah;
@@ -770,9 +558,9 @@ static inline struct hfi1_srq *to_isrq(struct ib_srq *ibsrq)
 	return container_of(ibsrq, struct hfi1_srq, ibsrq);
 }
 
-static inline struct hfi1_qp *to_iqp(struct ib_qp *ibqp)
+static inline struct rvt_qp *to_iqp(struct ib_qp *ibqp)
 {
-	return container_of(ibqp, struct hfi1_qp, ibqp);
+	return container_of(ibqp, struct rvt_qp, ibqp);
 }
 
 static inline struct hfi1_ibdev *to_idev(struct ib_device *ibdev)
@@ -783,7 +571,7 @@ static inline struct hfi1_ibdev *to_idev(struct ib_device *ibdev)
 	return container_of(rdi, struct hfi1_ibdev, rdi);
 }
 
-static inline struct hfi1_qp *iowait_to_qp(struct  iowait *s_iowait)
+static inline struct rvt_qp *iowait_to_qp(struct  iowait *s_iowait)
 {
 	struct hfi1_qp_priv *priv;
 
@@ -795,7 +583,7 @@ static inline struct hfi1_qp *iowait_to_qp(struct  iowait *s_iowait)
  * Send if not busy or waiting for I/O and either
  * a RC response is pending or we can process send work requests.
  */
-static inline int hfi1_send_ok(struct hfi1_qp *qp)
+static inline int hfi1_send_ok(struct rvt_qp *qp)
 {
 	return !(qp->s_flags & (HFI1_S_BUSY | HFI1_S_ANY_WAIT_IO)) &&
 		(qp->s_hdrwords || (qp->s_flags & HFI1_S_RESP_PENDING) ||
@@ -805,7 +593,7 @@ static inline int hfi1_send_ok(struct hfi1_qp *qp)
 /*
  * This must be called with s_lock held.
  */
-void hfi1_schedule_send(struct hfi1_qp *qp);
+void hfi1_schedule_send(struct rvt_qp *qp);
 void hfi1_bad_pqkey(struct hfi1_ibport *ibp, __be16 trap_num, u32 key, u32 sl,
 		    u32 qp1, u32 qp2, __be16 lid1, __be16 lid2);
 void hfi1_cap_mask_chg(struct hfi1_ibport *ibp);
@@ -886,13 +674,13 @@ int hfi1_mcast_tree_empty(struct hfi1_ibport *ibp);
 struct verbs_txreq;
 void hfi1_put_txreq(struct verbs_txreq *tx);
 
-int hfi1_verbs_send(struct hfi1_qp *qp, struct ahg_ib_header *ahdr,
-		    u32 hdrwords, struct hfi1_sge_state *ss, u32 len);
+int hfi1_verbs_send(struct rvt_qp *qp, struct ahg_ib_header *ahdr,
+		    u32 hdrwords, struct rvt_sge_state *ss, u32 len);
 
-void hfi1_copy_sge(struct hfi1_sge_state *ss, void *data, u32 length,
+void hfi1_copy_sge(struct rvt_sge_state *ss, void *data, u32 length,
 		   int release);
 
-void hfi1_skip_sge(struct hfi1_sge_state *ss, u32 length, int release);
+void hfi1_skip_sge(struct rvt_sge_state *ss, u32 length, int release);
 
 void hfi1_cnp_rcv(struct hfi1_packet *packet);
 
@@ -904,7 +692,7 @@ void hfi1_rc_hdrerr(
 	struct hfi1_ctxtdata *rcd,
 	struct hfi1_ib_header *hdr,
 	u32 rcv_flags,
-	struct hfi1_qp *qp);
+	struct rvt_qp *qp);
 
 u8 ah_to_sc(struct ib_device *ibdev, struct ib_ah_attr *ah_attr);
 
@@ -914,9 +702,9 @@ struct ib_ah *hfi1_create_qp0_ah(struct hfi1_ibport *ibp, u16 dlid);
 
 void hfi1_rc_rnr_retry(unsigned long arg);
 
-void hfi1_rc_send_complete(struct hfi1_qp *qp, struct hfi1_ib_header *hdr);
+void hfi1_rc_send_complete(struct rvt_qp *qp, struct hfi1_ib_header *hdr);
 
-void hfi1_rc_error(struct hfi1_qp *qp, enum ib_wc_status err);
+void hfi1_rc_error(struct rvt_qp *qp, enum ib_wc_status err);
 
 void hfi1_ud_rcv(struct hfi1_packet *packet);
 
@@ -927,9 +715,9 @@ int hfi1_alloc_lkey(struct rvt_mregion *mr, int dma_region);
 void hfi1_free_lkey(struct rvt_mregion *mr);
 
 int hfi1_lkey_ok(struct rvt_lkey_table *rkt, struct rvt_pd *pd,
-		 struct hfi1_sge *isge, struct ib_sge *sge, int acc);
+		 struct rvt_sge *isge, struct ib_sge *sge, int acc);
 
-int hfi1_rkey_ok(struct hfi1_qp *qp, struct hfi1_sge *sge,
+int hfi1_rkey_ok(struct rvt_qp *qp, struct rvt_sge *sge,
 		 u32 len, u64 vaddr, u32 rkey, int acc);
 
 int hfi1_post_srq_receive(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
@@ -990,7 +778,7 @@ struct ib_fast_reg_page_list *hfi1_alloc_fast_reg_page_list(
 
 void hfi1_free_fast_reg_page_list(struct ib_fast_reg_page_list *pl);
 
-int hfi1_fast_reg_mr(struct hfi1_qp *qp, struct ib_send_wr *wr);
+int hfi1_fast_reg_mr(struct rvt_qp *qp, struct ib_send_wr *wr);
 
 struct ib_fmr *hfi1_alloc_fmr(struct ib_pd *pd, int mr_access_flags,
 			      struct ib_fmr_attr *fmr_attr);
@@ -1013,7 +801,7 @@ static inline void hfi1_put_mr(struct rvt_mregion *mr)
 		complete(&mr->comp);
 }
 
-static inline void hfi1_put_ss(struct hfi1_sge_state *ss)
+static inline void hfi1_put_ss(struct rvt_sge_state *ss)
 {
 	while (ss->num_sge) {
 		hfi1_put_mr(ss->sge.mr);
@@ -1024,42 +812,42 @@ static inline void hfi1_put_ss(struct hfi1_sge_state *ss)
 
 void hfi1_release_mmap_info(struct kref *ref);
 
-struct hfi1_mmap_info *hfi1_create_mmap_info(struct hfi1_ibdev *dev, u32 size,
-					     struct ib_ucontext *context,
-					     void *obj);
+struct rvt_mmap_info *hfi1_create_mmap_info(struct hfi1_ibdev *dev, u32 size,
+					    struct ib_ucontext *context,
+					    void *obj);
 
-void hfi1_update_mmap_info(struct hfi1_ibdev *dev, struct hfi1_mmap_info *ip,
+void hfi1_update_mmap_info(struct hfi1_ibdev *dev, struct rvt_mmap_info *ip,
 			   u32 size, void *obj);
 
 int hfi1_mmap(struct ib_ucontext *context, struct vm_area_struct *vma);
 
-int hfi1_get_rwqe(struct hfi1_qp *qp, int wr_id_only);
+int hfi1_get_rwqe(struct rvt_qp *qp, int wr_id_only);
 
-void hfi1_migrate_qp(struct hfi1_qp *qp);
+void hfi1_migrate_qp(struct rvt_qp *qp);
 
 int hfi1_ruc_check_hdr(struct hfi1_ibport *ibp, struct hfi1_ib_header *hdr,
-		       int has_grh, struct hfi1_qp *qp, u32 bth0);
+		       int has_grh, struct rvt_qp *qp, u32 bth0);
 
 u32 hfi1_make_grh(struct hfi1_ibport *ibp, struct ib_grh *hdr,
 		  struct ib_global_route *grh, u32 hwords, u32 nwords);
 
-void clear_ahg(struct hfi1_qp *qp);
+void clear_ahg(struct rvt_qp *qp);
 
-void hfi1_make_ruc_header(struct hfi1_qp *qp, struct hfi1_other_headers *ohdr,
+void hfi1_make_ruc_header(struct rvt_qp *qp, struct hfi1_other_headers *ohdr,
 			  u32 bth0, u32 bth2, int middle);
 
 void hfi1_do_send(struct work_struct *work);
 
-void hfi1_send_complete(struct hfi1_qp *qp, struct hfi1_swqe *wqe,
+void hfi1_send_complete(struct rvt_qp *qp, struct rvt_swqe *wqe,
 			enum ib_wc_status status);
 
-void hfi1_send_rc_ack(struct hfi1_ctxtdata *, struct hfi1_qp *qp, int is_fecn);
+void hfi1_send_rc_ack(struct hfi1_ctxtdata *, struct rvt_qp *qp, int is_fecn);
 
-int hfi1_make_rc_req(struct hfi1_qp *qp);
+int hfi1_make_rc_req(struct rvt_qp *qp);
 
-int hfi1_make_uc_req(struct hfi1_qp *qp);
+int hfi1_make_uc_req(struct rvt_qp *qp);
 
-int hfi1_make_ud_req(struct hfi1_qp *qp);
+int hfi1_make_ud_req(struct rvt_qp *qp);
 
 int hfi1_register_ib_device(struct hfi1_devdata *);
 
@@ -1069,15 +857,15 @@ void hfi1_ib_rcv(struct hfi1_packet *packet);
 
 unsigned hfi1_get_npkeys(struct hfi1_devdata *);
 
-int hfi1_verbs_send_dma(struct hfi1_qp *qp, struct ahg_ib_header *hdr,
-			u32 hdrwords, struct hfi1_sge_state *ss, u32 len,
+int hfi1_verbs_send_dma(struct rvt_qp *qp, struct ahg_ib_header *hdr,
+			u32 hdrwords, struct rvt_sge_state *ss, u32 len,
 			u32 plen, u32 dwords, u64 pbc);
 
-int hfi1_verbs_send_pio(struct hfi1_qp *qp, struct ahg_ib_header *hdr,
-			u32 hdrwords, struct hfi1_sge_state *ss, u32 len,
+int hfi1_verbs_send_pio(struct rvt_qp *qp, struct ahg_ib_header *hdr,
+			u32 hdrwords, struct rvt_sge_state *ss, u32 len,
 			u32 plen, u32 dwords, u64 pbc);
 
-struct send_context *qp_to_send_context(struct hfi1_qp *qp, u8 sc5);
+struct send_context *qp_to_send_context(struct rvt_qp *qp, u8 sc5);
 
 extern const enum ib_wc_opcode ib_hfi1_wc_opcode[];
 

@@ -97,13 +97,13 @@ const u32 ib_hfi1_rnr_table[32] = {
  * Validate a RWQE and fill in the SGE state.
  * Return 1 if OK.
  */
-static int init_sge(struct hfi1_qp *qp, struct hfi1_rwqe *wqe)
+static int init_sge(struct rvt_qp *qp, struct rvt_rwqe *wqe)
 {
 	int i, j, ret;
 	struct ib_wc wc;
 	struct rvt_lkey_table *rkt;
 	struct rvt_pd *pd;
-	struct hfi1_sge_state *ss;
+	struct rvt_sge_state *ss;
 
 	rkt = &to_idev(qp->ibqp.device)->lk_table;
 	pd = to_ipd(qp->ibqp.srq ? qp->ibqp.srq->pd : qp->ibqp.pd);
@@ -127,7 +127,7 @@ static int init_sge(struct hfi1_qp *qp, struct hfi1_rwqe *wqe)
 
 bad_lkey:
 	while (j) {
-		struct hfi1_sge *sge = --j ? &ss->sg_list[j - 1] : &ss->sge;
+		struct rvt_sge *sge = --j ? &ss->sg_list[j - 1] : &ss->sge;
 
 		hfi1_put_mr(sge->mr);
 	}
@@ -154,13 +154,13 @@ bail:
  *
  * Can be called from interrupt level.
  */
-int hfi1_get_rwqe(struct hfi1_qp *qp, int wr_id_only)
+int hfi1_get_rwqe(struct rvt_qp *qp, int wr_id_only)
 {
 	unsigned long flags;
-	struct hfi1_rq *rq;
-	struct hfi1_rwq *wq;
+	struct rvt_rq *rq;
+	struct rvt_rwq *wq;
 	struct hfi1_srq *srq;
-	struct hfi1_rwqe *wqe;
+	struct rvt_rwqe *wqe;
 	void (*handler)(struct ib_event *, void *);
 	u32 tail;
 	int ret;
@@ -245,7 +245,7 @@ bail:
  * Switch to alternate path.
  * The QP s_lock should be held and interrupts disabled.
  */
-void hfi1_migrate_qp(struct hfi1_qp *qp)
+void hfi1_migrate_qp(struct rvt_qp *qp)
 {
 	struct ib_event ev;
 
@@ -285,7 +285,7 @@ static int gid_ok(union ib_gid *gid, __be64 gid_prefix, __be64 id)
  * The s_lock will be acquired around the hfi1_migrate_qp() call.
  */
 int hfi1_ruc_check_hdr(struct hfi1_ibport *ibp, struct hfi1_ib_header *hdr,
-		       int has_grh, struct hfi1_qp *qp, u32 bth0)
+		       int has_grh, struct rvt_qp *qp, u32 bth0)
 {
 	__be64 guid;
 	unsigned long flags;
@@ -373,12 +373,12 @@ err:
  * receive interrupts since this is a connected protocol and all packets
  * will pass through here.
  */
-static void ruc_loopback(struct hfi1_qp *sqp)
+static void ruc_loopback(struct rvt_qp *sqp)
 {
 	struct hfi1_ibport *ibp = to_iport(sqp->ibqp.device, sqp->port_num);
-	struct hfi1_qp *qp;
-	struct hfi1_swqe *wqe;
-	struct hfi1_sge *sge;
+	struct rvt_qp *qp;
+	struct rvt_swqe *wqe;
+	struct rvt_sge *sge;
 	unsigned long flags;
 	struct ib_wc wc;
 	u64 sdata;
@@ -698,7 +698,7 @@ u32 hfi1_make_grh(struct hfi1_ibport *ibp, struct ib_grh *hdr,
 /*
  * free_ahg - clear ahg from QP
  */
-void clear_ahg(struct hfi1_qp *qp)
+void clear_ahg(struct rvt_qp *qp)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 
@@ -723,7 +723,7 @@ void clear_ahg(struct hfi1_qp *qp)
  * Subsequent middles use the copied entry, editing the
  * PSN with 1 or 2 edits.
  */
-static inline void build_ahg(struct hfi1_qp *qp, u32 npsn)
+static inline void build_ahg(struct rvt_qp *qp, u32 npsn)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 	if (unlikely(qp->s_flags & HFI1_S_AHG_CLEAR))
@@ -770,7 +770,7 @@ static inline void build_ahg(struct hfi1_qp *qp, u32 npsn)
 	}
 }
 
-void hfi1_make_ruc_header(struct hfi1_qp *qp, struct hfi1_other_headers *ohdr,
+void hfi1_make_ruc_header(struct rvt_qp *qp, struct hfi1_other_headers *ohdr,
 			  u32 bth0, u32 bth2, int middle)
 {
 	struct hfi1_ibport *ibp = to_iport(qp->ibqp.device, qp->port_num);
@@ -848,11 +848,11 @@ void hfi1_make_ruc_header(struct hfi1_qp *qp, struct hfi1_other_headers *ohdr,
 void hfi1_do_send(struct work_struct *work)
 {
 	struct iowait *wait = container_of(work, struct iowait, iowork);
-	struct hfi1_qp *qp = iowait_to_qp(wait);
+	struct rvt_qp *qp = iowait_to_qp(wait);
 	struct hfi1_qp_priv *priv = qp->priv;
 	struct hfi1_ibport *ibp = to_iport(qp->ibqp.device, qp->port_num);
 	struct hfi1_pportdata *ppd = ppd_from_ibp(ibp);
-	int (*make_req)(struct hfi1_qp *qp);
+	int (*make_req)(struct rvt_qp *qp);
 	unsigned long flags;
 
 	if ((qp->ibqp.qp_type == IB_QPT_RC ||
@@ -902,7 +902,7 @@ void hfi1_do_send(struct work_struct *work)
 /*
  * This should be called with s_lock held.
  */
-void hfi1_send_complete(struct hfi1_qp *qp, struct hfi1_swqe *wqe,
+void hfi1_send_complete(struct rvt_qp *qp, struct rvt_swqe *wqe,
 			enum ib_wc_status status)
 {
 	u32 old_last, last;
@@ -912,7 +912,7 @@ void hfi1_send_complete(struct hfi1_qp *qp, struct hfi1_swqe *wqe,
 		return;
 
 	for (i = 0; i < wqe->wr.num_sge; i++) {
-		struct hfi1_sge *sge = &wqe->sg_list[i];
+		struct rvt_sge *sge = &wqe->sg_list[i];
 
 		hfi1_put_mr(sge->mr);
 	}

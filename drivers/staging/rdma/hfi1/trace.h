@@ -294,7 +294,7 @@ TRACE_EVENT(hfi1_wantpiointr,
 );
 
 DECLARE_EVENT_CLASS(hfi1_qpsleepwakeup_template,
-	TP_PROTO(struct hfi1_qp *qp, u32 flags),
+	TP_PROTO(struct rvt_qp *qp, u32 flags),
 	TP_ARGS(qp, flags),
 	TP_STRUCT__entry(
 		DD_DEV_ENTRY(dd_from_ibdev(qp->ibqp.device))
@@ -318,17 +318,17 @@ DECLARE_EVENT_CLASS(hfi1_qpsleepwakeup_template,
 );
 
 DEFINE_EVENT(hfi1_qpsleepwakeup_template, hfi1_qpwakeup,
-	     TP_PROTO(struct hfi1_qp *qp, u32 flags),
+	     TP_PROTO(struct rvt_qp *qp, u32 flags),
 	     TP_ARGS(qp, flags));
 
 DEFINE_EVENT(hfi1_qpsleepwakeup_template, hfi1_qpsleep,
-	     TP_PROTO(struct hfi1_qp *qp, u32 flags),
+	     TP_PROTO(struct rvt_qp *qp, u32 flags),
 	     TP_ARGS(qp, flags));
 
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM hfi1_qphash
 DECLARE_EVENT_CLASS(hfi1_qphash_template,
-	TP_PROTO(struct hfi1_qp *qp, u32 bucket),
+	TP_PROTO(struct rvt_qp *qp, u32 bucket),
 	TP_ARGS(qp, bucket),
 	TP_STRUCT__entry(
 		DD_DEV_ENTRY(dd_from_ibdev(qp->ibqp.device))
@@ -349,11 +349,11 @@ DECLARE_EVENT_CLASS(hfi1_qphash_template,
 );
 
 DEFINE_EVENT(hfi1_qphash_template, hfi1_qpinsert,
-	TP_PROTO(struct hfi1_qp *qp, u32 bucket),
+	TP_PROTO(struct rvt_qp *qp, u32 bucket),
 	TP_ARGS(qp, bucket));
 
 DEFINE_EVENT(hfi1_qphash_template, hfi1_qpremove,
-	TP_PROTO(struct hfi1_qp *qp, u32 bucket),
+	TP_PROTO(struct rvt_qp *qp, u32 bucket),
 	TP_ARGS(qp, bucket));
 
 #undef TRACE_SYSTEM
@@ -1253,7 +1253,7 @@ TRACE_EVENT(hfi1_sdma_state,
 #define TRACE_SYSTEM hfi1_rc
 
 DECLARE_EVENT_CLASS(hfi1_sdma_rc,
-	TP_PROTO(struct hfi1_qp *qp, u32 psn),
+	TP_PROTO(struct rvt_qp *qp, u32 psn),
 	TP_ARGS(qp, psn),
 	TP_STRUCT__entry(
 		DD_DEV_ENTRY(dd_from_ibdev(qp->ibqp.device))
@@ -1283,7 +1283,7 @@ DECLARE_EVENT_CLASS(hfi1_sdma_rc,
 );
 
 DEFINE_EVENT(hfi1_sdma_rc, hfi1_rc_sendcomplete,
-	     TP_PROTO(struct hfi1_qp *qp, u32 psn),
+	     TP_PROTO(struct rvt_qp *qp, u32 psn),
 	     TP_ARGS(qp, psn)
 );
 

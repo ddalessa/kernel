@@ -61,11 +61,11 @@
  *
  * Return 1 if constructed; otherwise, return 0.
  */
-int hfi1_make_uc_req(struct hfi1_qp *qp)
+int hfi1_make_uc_req(struct rvt_qp *qp)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 	struct hfi1_other_headers *ohdr;
-	struct hfi1_swqe *wqe;
+	struct rvt_swqe *wqe;
 	unsigned long flags;
 	u32 hwords = 5;
 	u32 bth0 = 0;
@@ -267,7 +267,7 @@ void hfi1_uc_rcv(struct hfi1_packet *packet)
 	u32 rcv_flags = packet->rcv_flags;
 	void *data = packet->ebuf;
 	u32 tlen = packet->tlen;
-	struct hfi1_qp *qp = packet->qp;
+	struct rvt_qp *qp = packet->qp;
 	struct hfi1_other_headers *ohdr = packet->ohdr;
 	u32 opcode;
 	u32 hdrsize = packet->hlen;
