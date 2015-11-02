@@ -349,11 +349,12 @@ bail:
  */
 static void reset_qp(struct hfi1_qp *qp, enum ib_qp_type type)
 {
+	struct hfi1_qp_priv *priv = qp->priv;
 	qp->remote_qpn = 0;
 	qp->qkey = 0;
 	qp->qp_access_flags = 0;
 	iowait_init(
-		&qp->s_iowait,
+		&priv->s_iowait,
 		1,
 		hfi1_do_send,
 		iowait_sleep,
@@ -459,6 +460,7 @@ static void clear_mr_refs(struct hfi1_qp *qp, int clr_sends)
 int hfi1_error_qp(struct hfi1_qp *qp, enum ib_wc_status err)
 {
 	struct hfi1_ibdev *dev = to_idev(qp->ibqp.device);
+	struct hfi1_qp_priv *priv = qp->priv;
 	struct ib_wc wc;
 	int ret = 0;
 
@@ -476,9 +478,9 @@ int hfi1_error_qp(struct hfi1_qp *qp, enum ib_wc_status err)
 		qp->s_flags &= ~HFI1_S_ANY_WAIT_SEND;
 
 	write_seqlock(&dev->iowait_lock);
-	if (!list_empty(&qp->s_iowait.list) && !(qp->s_flags & HFI1_S_BUSY)) {
+	if (!list_empty(&priv->s_iowait.list) && !(qp->s_flags & HFI1_S_BUSY)) {
 		qp->s_flags &= ~HFI1_S_ANY_WAIT_IO;
-		list_del_init(&qp->s_iowait.list);
+		list_del_init(&priv->s_iowait.list);
 		if (atomic_dec_and_test(&qp->refcount))
 			wake_up(&qp->wait);
 	}
@@ -543,11 +545,13 @@ bail:
 
 static void flush_tx_list(struct hfi1_qp *qp)
 {
-	while (!list_empty(&qp->s_iowait.tx_head)) {
+	struct hfi1_qp_priv *priv = qp->priv;
+
+	while (!list_empty(&priv->s_iowait.tx_head)) {
 		struct sdma_txreq *tx;
 
 		tx = list_first_entry(
-			&qp->s_iowait.tx_head,
+			&priv->s_iowait.tx_head,
 			struct sdma_txreq,
 			list);
 		list_del_init(&tx->list);
@@ -558,12 +562,13 @@ static void flush_tx_list(struct hfi1_qp *qp)
 
 static void flush_iowait(struct hfi1_qp *qp)
 {
+	struct hfi1_qp_priv *priv = qp->priv;
 	struct hfi1_ibdev *dev = to_idev(qp->ibqp.device);
 	unsigned long flags;
 
 	write_seqlock_irqsave(&dev->iowait_lock, flags);
-	if (!list_empty(&qp->s_iowait.list)) {
-		list_del_init(&qp->s_iowait.list);
+	if (!list_empty(&priv->s_iowait.list)) {
+		list_del_init(&priv->s_iowait.list);
 		if (atomic_dec_and_test(&qp->refcount))
 			wake_up(&qp->wait);
 	}
@@ -611,6 +616,7 @@ int hfi1_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 {
 	struct hfi1_ibdev *dev = to_idev(ibqp->device);
 	struct hfi1_qp *qp = to_iqp(ibqp);
+	struct hfi1_qp_priv *priv = qp->priv;
 	enum ib_qp_state cur_state, new_state;
 	struct ib_event ev;
 	int lastwqe = 0;
@@ -725,9 +731,9 @@ int hfi1_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 			spin_unlock(&qp->s_lock);
 			spin_unlock_irq(&qp->r_lock);
 			/* Stop the sending work queue and retry timer */
-			cancel_work_sync(&qp->s_iowait.iowork);
+			cancel_work_sync(&priv->s_iowait.iowork);
 			del_timer_sync(&qp->s_timer);
-			iowait_sdma_drain(&qp->s_iowait);
+			iowait_sdma_drain(&priv->s_iowait);
 			flush_tx_list(qp);
 			remove_qp(dev, qp);
 			wait_event(qp->wait, !atomic_read(&qp->refcount));
@@ -1014,6 +1020,7 @@ struct ib_qp *hfi1_create_qp(struct ib_pd *ibpd,
 			     struct ib_udata *udata)
 {
 	struct hfi1_qp *qp;
+	struct hfi1_qp_priv *priv;
 	int err;
 	struct hfi1_swqe *swq = NULL;
 	struct hfi1_ibdev *dev;
@@ -1081,11 +1088,18 @@ struct ib_qp *hfi1_create_qp(struct ib_pd *ibpd,
 			goto bail_swq;
 		}
 		RCU_INIT_POINTER(qp->next, NULL);
-		qp->s_hdr = kzalloc(sizeof(*qp->s_hdr), GFP_KERNEL);
-		if (!qp->s_hdr) {
+		priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+		if (!priv) {
+			ret = ERR_PTR(-ENOMEM);
+			goto bail_qp_priv;
+		}
+		priv->owner = qp;
+		priv->s_hdr = kzalloc(sizeof(*priv->s_hdr), GFP_KERNEL);
+		if (!priv->s_hdr) {
 			ret = ERR_PTR(-ENOMEM);
 			goto bail_qp;
 		}
+		qp->priv = priv;
 		qp->timeout_jiffies =
 			usecs_to_jiffies((4096UL * (1UL << qp->timeout)) /
 				1000UL);
@@ -1228,7 +1242,9 @@ bail_ip:
 		vfree(qp->r_rq.wq);
 	free_qpn(&dev->qp_dev->qpn_table, qp->ibqp.qp_num);
 bail_qp:
-	kfree(qp->s_hdr);
+	kfree(priv->s_hdr);
+	kfree(priv);
+bail_qp_priv:
 	kfree(qp);
 bail_swq:
 	vfree(swq);
@@ -1249,6 +1265,7 @@ int hfi1_destroy_qp(struct ib_qp *ibqp)
 {
 	struct hfi1_qp *qp = to_iqp(ibqp);
 	struct hfi1_ibdev *dev = to_idev(ibqp->device);
+	struct hfi1_qp_priv *priv = qp->priv;
 
 	/* Make sure HW and driver activity is stopped. */
 	spin_lock_irq(&qp->r_lock);
@@ -1259,9 +1276,9 @@ int hfi1_destroy_qp(struct ib_qp *ibqp)
 		qp->s_flags &= ~(HFI1_S_TIMER | HFI1_S_ANY_WAIT);
 		spin_unlock(&qp->s_lock);
 		spin_unlock_irq(&qp->r_lock);
-		cancel_work_sync(&qp->s_iowait.iowork);
+		cancel_work_sync(&priv->s_iowait.iowork);
 		del_timer_sync(&qp->s_timer);
-		iowait_sdma_drain(&qp->s_iowait);
+		iowait_sdma_drain(&priv->s_iowait);
 		flush_tx_list(qp);
 		remove_qp(dev, qp);
 		wait_event(qp->wait, !atomic_read(&qp->refcount));
@@ -1284,7 +1301,8 @@ int hfi1_destroy_qp(struct ib_qp *ibqp)
 	else
 		vfree(qp->r_rq.wq);
 	vfree(qp->s_wq);
-	kfree(qp->s_hdr);
+	kfree(priv->s_hdr);
+	kfree(priv);
 	kfree(qp);
 	return 0;
 }
@@ -1405,11 +1423,13 @@ static int iowait_sleep(
 {
 	struct verbs_txreq *tx = container_of(stx, struct verbs_txreq, txreq);
 	struct hfi1_qp *qp;
+	struct hfi1_qp_priv *priv;
 	unsigned long flags;
 	int ret = 0;
 	struct hfi1_ibdev *dev;
 
 	qp = tx->qp;
+	priv = qp->priv;
 
 	spin_lock_irqsave(&qp->s_lock, flags);
 	if (ib_hfi1_state_ops[qp->state] & HFI1_PROCESS_RECV_OK) {
@@ -1425,13 +1445,13 @@ static int iowait_sleep(
 		write_seqlock(&dev->iowait_lock);
 		if (sdma_progress(sde, seq, stx))
 			goto eagain;
-		if (list_empty(&qp->s_iowait.list)) {
+		if (list_empty(&priv->s_iowait.list)) {
 			struct hfi1_ibport *ibp =
 				to_iport(qp->ibqp.device, qp->port_num);
 
 			ibp->n_dmawait++;
 			qp->s_flags |= HFI1_S_WAIT_DMA_DESC;
-			list_add_tail(&qp->s_iowait.list, &sde->dmawait);
+			list_add_tail(&priv->s_iowait.list, &sde->dmawait);
 			trace_hfi1_qpsleep(qp, HFI1_S_WAIT_DMA_DESC);
 			atomic_inc(&qp->refcount);
 		}
@@ -1453,7 +1473,7 @@ eagain:
 
 static void iowait_wakeup(struct iowait *wait, int reason)
 {
-	struct hfi1_qp *qp = container_of(wait, struct hfi1_qp, s_iowait);
+	struct hfi1_qp *qp = iowait_to_qp(wait);
 
 	WARN_ON(reason != SDMA_AVAIL_REASON);
 	hfi1_qp_wakeup(qp, HFI1_S_WAIT_DMA_DESC);
@@ -1637,9 +1657,10 @@ void qp_iter_print(struct seq_file *s, struct qp_iter *iter)
 {
 	struct hfi1_swqe *wqe;
 	struct hfi1_qp *qp = iter->qp;
+	struct hfi1_qp_priv *priv = qp->priv;
 	struct sdma_engine *sde;
 
-	sde = qp_to_sdma_engine(qp, qp->s_sc);
+	sde = qp_to_sdma_engine(qp, priv->s_sc);
 	wqe = get_swqe_ptr(qp, qp->s_last);
 	seq_printf(s,
 		   "N %d %s QP%u R %u %s %u %u %u f=%x %u %u %u %u %u PSN %x %x %x %x %x (%u %u %u %u %u %u) QP%u LID %x SL %u MTU %d %u %u %u SDE %p,%u\n",
@@ -1652,8 +1673,8 @@ void qp_iter_print(struct seq_file *s, struct qp_iter *iter)
 		   wqe ? wqe->wr.opcode : 0,
 		   qp->s_hdrwords,
 		   qp->s_flags,
-		   atomic_read(&qp->s_iowait.sdma_busy),
-		   !list_empty(&qp->s_iowait.list),
+		   atomic_read(&priv->s_iowait.sdma_busy),
+		   !list_empty(&priv->s_iowait.list),
 		   qp->timeout,
 		   wqe ? wqe->ssn : 0,
 		   qp->s_lsn,

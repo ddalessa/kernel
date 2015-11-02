@@ -369,10 +369,11 @@ struct qib_qp *qib_lookup_qpn(struct qib_ibport *ibp, u32 qpn)
  */
 static void qib_reset_qp(struct qib_qp *qp, enum ib_qp_type type)
 {
+	struct qib_qp_priv *priv = qp->priv;
 	qp->remote_qpn = 0;
 	qp->qkey = 0;
 	qp->qp_access_flags = 0;
-	atomic_set(&qp->s_dma_busy, 0);
+	atomic_set(&priv->s_dma_busy, 0);
 	qp->s_flags &= QIB_S_SIGNAL_REQ_WR;
 	qp->s_hdrwords = 0;
 	qp->s_wqe = NULL;
@@ -472,6 +473,7 @@ static void clear_mr_refs(struct qib_qp *qp, int clr_sends)
  */
 int qib_error_qp(struct qib_qp *qp, enum ib_wc_status err)
 {
+	struct qib_qp_priv *priv = qp->priv;
 	struct qib_ibdev *dev = to_idev(qp->ibqp.device);
 	struct ib_wc wc;
 	int ret = 0;
@@ -490,9 +492,9 @@ int qib_error_qp(struct qib_qp *qp, enum ib_wc_status err)
 		qp->s_flags &= ~QIB_S_ANY_WAIT_SEND;
 
 	spin_lock(&dev->pending_lock);
-	if (!list_empty(&qp->iowait) && !(qp->s_flags & QIB_S_BUSY)) {
+	if (!list_empty(&priv->iowait) && !(qp->s_flags & QIB_S_BUSY)) {
 		qp->s_flags &= ~QIB_S_ANY_WAIT_IO;
-		list_del_init(&qp->iowait);
+		list_del_init(&priv->iowait);
 	}
 	spin_unlock(&dev->pending_lock);
 
@@ -502,9 +504,9 @@ int qib_error_qp(struct qib_qp *qp, enum ib_wc_status err)
 			qib_put_mr(qp->s_rdma_mr);
 			qp->s_rdma_mr = NULL;
 		}
-		if (qp->s_tx) {
-			qib_put_txreq(qp->s_tx);
-			qp->s_tx = NULL;
+		if (priv->s_tx) {
+			qib_put_txreq(priv->s_tx);
+			priv->s_tx = NULL;
 		}
 	}
 
@@ -570,6 +572,7 @@ int qib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 {
 	struct qib_ibdev *dev = to_idev(ibqp->device);
 	struct qib_qp *qp = to_iqp(ibqp);
+	struct qib_qp_priv *priv = qp->priv;
 	enum ib_qp_state cur_state, new_state;
 	struct ib_event ev;
 	int lastwqe = 0;
@@ -696,19 +699,20 @@ int qib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		if (qp->state != IB_QPS_RESET) {
 			qp->state = IB_QPS_RESET;
 			spin_lock(&dev->pending_lock);
-			if (!list_empty(&qp->iowait))
-				list_del_init(&qp->iowait);
+			if (!list_empty(&priv->iowait))
+				list_del_init(&priv->iowait);
 			spin_unlock(&dev->pending_lock);
 			qp->s_flags &= ~(QIB_S_TIMER | QIB_S_ANY_WAIT);
 			spin_unlock(&qp->s_lock);
 			spin_unlock_irq(&qp->r_lock);
 			/* Stop the sending work queue and retry timer */
-			cancel_work_sync(&qp->s_work);
+			cancel_work_sync(&priv->s_work);
 			del_timer_sync(&qp->s_timer);
-			wait_event(qp->wait_dma, !atomic_read(&qp->s_dma_busy));
-			if (qp->s_tx) {
-				qib_put_txreq(qp->s_tx);
-				qp->s_tx = NULL;
+			wait_event(priv->wait_dma,
+				   !atomic_read(&priv->s_dma_busy));
+			if (priv->s_tx) {
+				qib_put_txreq(priv->s_tx);
+				priv->s_tx = NULL;
 			}
 			remove_qp(dev, qp);
 			wait_event(qp->wait, !atomic_read(&qp->refcount));
@@ -983,6 +987,7 @@ struct ib_qp *qib_create_qp(struct ib_pd *ibpd,
 	size_t sz;
 	size_t sg_list_sz;
 	struct ib_qp *ret;
+	struct qib_qp_priv *priv;
 
 	if (init_attr->cap.max_send_sge > ib_qib_max_sges ||
 	    init_attr->cap.max_send_wr > ib_qib_max_qp_wrs ||
@@ -1043,11 +1048,18 @@ struct ib_qp *qib_create_qp(struct ib_pd *ibpd,
 			goto bail_swq;
 		}
 		RCU_INIT_POINTER(qp->next, NULL);
-		qp->s_hdr = kzalloc(sizeof(*qp->s_hdr), GFP_KERNEL);
-		if (!qp->s_hdr) {
+		priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+		if (!priv) {
+			ret = ERR_PTR(-ENOMEM);
+			goto bail_qp_hdr;
+		}
+		priv->owner = qp;
+		priv->s_hdr = kzalloc(sizeof(*priv->s_hdr), GFP_KERNEL);
+		if (!priv->s_hdr) {
 			ret = ERR_PTR(-ENOMEM);
 			goto bail_qp;
 		}
+		qp->priv = priv;
 		qp->timeout_jiffies =
 			usecs_to_jiffies((4096UL * (1UL << qp->timeout)) /
 				1000UL);
@@ -1075,11 +1087,11 @@ struct ib_qp *qib_create_qp(struct ib_pd *ibpd,
 		spin_lock_init(&qp->r_rq.lock);
 		atomic_set(&qp->refcount, 0);
 		init_waitqueue_head(&qp->wait);
-		init_waitqueue_head(&qp->wait_dma);
+		init_waitqueue_head(&priv->wait_dma);
 		init_timer(&qp->s_timer);
 		qp->s_timer.data = (unsigned long)qp;
-		INIT_WORK(&qp->s_work, qib_do_send);
-		INIT_LIST_HEAD(&qp->iowait);
+		INIT_WORK(&priv->s_work, qib_do_send);
+		INIT_LIST_HEAD(&priv->iowait);
 		INIT_LIST_HEAD(&qp->rspwait);
 		qp->state = IB_QPS_RESET;
 		qp->s_wq = swq;
@@ -1169,7 +1181,9 @@ bail_ip:
 		vfree(qp->r_rq.wq);
 	free_qpn(&dev->qpn_table, qp->ibqp.qp_num);
 bail_qp:
-	kfree(qp->s_hdr);
+	kfree(priv->s_hdr);
+	kfree(priv);
+bail_qp_hdr:
 	kfree(qp);
 bail_swq:
 	vfree(swq);
@@ -1190,23 +1204,24 @@ int qib_destroy_qp(struct ib_qp *ibqp)
 {
 	struct qib_qp *qp = to_iqp(ibqp);
 	struct qib_ibdev *dev = to_idev(ibqp->device);
+	struct qib_qp_priv *priv = qp->priv;
 
 	/* Make sure HW and driver activity is stopped. */
 	spin_lock_irq(&qp->s_lock);
 	if (qp->state != IB_QPS_RESET) {
 		qp->state = IB_QPS_RESET;
 		spin_lock(&dev->pending_lock);
-		if (!list_empty(&qp->iowait))
-			list_del_init(&qp->iowait);
+		if (!list_empty(&priv->iowait))
+			list_del_init(&priv->iowait);
 		spin_unlock(&dev->pending_lock);
 		qp->s_flags &= ~(QIB_S_TIMER | QIB_S_ANY_WAIT);
 		spin_unlock_irq(&qp->s_lock);
-		cancel_work_sync(&qp->s_work);
+		cancel_work_sync(&priv->s_work);
 		del_timer_sync(&qp->s_timer);
-		wait_event(qp->wait_dma, !atomic_read(&qp->s_dma_busy));
-		if (qp->s_tx) {
-			qib_put_txreq(qp->s_tx);
-			qp->s_tx = NULL;
+		wait_event(priv->wait_dma, !atomic_read(&priv->s_dma_busy));
+		if (priv->s_tx) {
+			qib_put_txreq(priv->s_tx);
+			priv->s_tx = NULL;
 		}
 		remove_qp(dev, qp);
 		wait_event(qp->wait, !atomic_read(&qp->refcount));
@@ -1225,7 +1240,8 @@ int qib_destroy_qp(struct ib_qp *ibqp)
 	else
 		vfree(qp->r_rq.wq);
 	vfree(qp->s_wq);
-	kfree(qp->s_hdr);
+	kfree(priv->s_hdr);
+	kfree(priv);
 	kfree(qp);
 	return 0;
 }
@@ -1348,6 +1364,7 @@ void qib_qp_iter_print(struct seq_file *s, struct qib_qp_iter *iter)
 {
 	struct qib_swqe *wqe;
 	struct qib_qp *qp = iter->qp;
+	struct qib_qp_priv *priv = qp->priv;
 
 	wqe = get_swqe_ptr(qp, qp->s_last);
 	seq_printf(s,
@@ -1359,8 +1376,8 @@ void qib_qp_iter_print(struct seq_file *s, struct qib_qp_iter *iter)
 		   wqe->wr.opcode,
 		   qp->s_hdrwords,
 		   qp->s_flags,
-		   atomic_read(&qp->s_dma_busy),
-		   !list_empty(&qp->iowait),
+		   atomic_read(&priv->s_dma_busy),
+		   !list_empty(&priv->iowait),
 		   qp->timeout,
 		   wqe->ssn,
 		   qp->s_lsn,

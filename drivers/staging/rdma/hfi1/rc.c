@@ -259,6 +259,7 @@ bail:
  */
 int hfi1_make_rc_req(struct hfi1_qp *qp)
 {
+	struct hfi1_qp_priv *priv = qp->priv;
 	struct hfi1_ibdev *dev = to_idev(qp->ibqp.device);
 	struct hfi1_other_headers *ohdr;
 	struct hfi1_sge_state *ss;
@@ -275,9 +276,9 @@ int hfi1_make_rc_req(struct hfi1_qp *qp)
 	int middle = 0;
 	int delta;
 
-	ohdr = &qp->s_hdr->ibh.u.oth;
+	ohdr = &priv->s_hdr->ibh.u.oth;
 	if (qp->remote_ah_attr.ah_flags & IB_AH_GRH)
-		ohdr = &qp->s_hdr->ibh.u.l.oth;
+		ohdr = &priv->s_hdr->ibh.u.l.oth;
 
 	/*
 	 * The lock is needed to synchronize between the sending tasklet,
@@ -297,7 +298,7 @@ int hfi1_make_rc_req(struct hfi1_qp *qp)
 		if (qp->s_last == qp->s_head)
 			goto bail;
 		/* If DMAs are in progress, we can't flush immediately. */
-		if (atomic_read(&qp->s_iowait.sdma_busy)) {
+		if (atomic_read(&priv->s_iowait.sdma_busy)) {
 			qp->s_flags |= HFI1_S_WAIT_DMA;
 			goto bail;
 		}

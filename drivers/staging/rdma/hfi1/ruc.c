@@ -700,7 +700,9 @@ u32 hfi1_make_grh(struct hfi1_ibport *ibp, struct ib_grh *hdr,
  */
 void clear_ahg(struct hfi1_qp *qp)
 {
-	qp->s_hdr->ahgcount = 0;
+	struct hfi1_qp_priv *priv = qp->priv;
+
+	priv->s_hdr->ahgcount = 0;
 	qp->s_flags &= ~(HFI1_S_AHG_VALID | HFI1_S_AHG_CLEAR);
 	if (qp->s_sde)
 		sdma_ahg_free(qp->s_sde, qp->s_ahgidx);
@@ -723,30 +725,31 @@ void clear_ahg(struct hfi1_qp *qp)
  */
 static inline void build_ahg(struct hfi1_qp *qp, u32 npsn)
 {
+	struct hfi1_qp_priv *priv = qp->priv;
 	if (unlikely(qp->s_flags & HFI1_S_AHG_CLEAR))
 		clear_ahg(qp);
 	if (!(qp->s_flags & HFI1_S_AHG_VALID)) {
 		/* first middle that needs copy  */
 		if (qp->s_ahgidx < 0) {
 			if (!qp->s_sde)
-				qp->s_sde = qp_to_sdma_engine(qp, qp->s_sc);
+				qp->s_sde = qp_to_sdma_engine(qp, priv->s_sc);
 			qp->s_ahgidx = sdma_ahg_alloc(qp->s_sde);
 		}
 		if (qp->s_ahgidx >= 0) {
 			qp->s_ahgpsn = npsn;
-			qp->s_hdr->tx_flags |= SDMA_TXREQ_F_AHG_COPY;
+			priv->s_hdr->tx_flags |= SDMA_TXREQ_F_AHG_COPY;
 			/* save to protect a change in another thread */
-			qp->s_hdr->sde = qp->s_sde;
-			qp->s_hdr->ahgidx = qp->s_ahgidx;
+			priv->s_hdr->sde = qp->s_sde;
+			priv->s_hdr->ahgidx = qp->s_ahgidx;
 			qp->s_flags |= HFI1_S_AHG_VALID;
 		}
 	} else {
 		/* subsequent middle after valid */
 		if (qp->s_ahgidx >= 0) {
-			qp->s_hdr->tx_flags |= SDMA_TXREQ_F_USE_AHG;
-			qp->s_hdr->ahgidx = qp->s_ahgidx;
-			qp->s_hdr->ahgcount++;
-			qp->s_hdr->ahgdesc[0] =
+			priv->s_hdr->tx_flags |= SDMA_TXREQ_F_USE_AHG;
+			priv->s_hdr->ahgidx = qp->s_ahgidx;
+			priv->s_hdr->ahgcount++;
+			priv->s_hdr->ahgdesc[0] =
 				sdma_build_ahg_descriptor(
 					(__force u16)cpu_to_be16((u16)npsn),
 					BTH2_OFFSET,
@@ -754,8 +757,8 @@ static inline void build_ahg(struct hfi1_qp *qp, u32 npsn)
 					16);
 			if ((npsn & 0xffff0000) !=
 					(qp->s_ahgpsn & 0xffff0000)) {
-				qp->s_hdr->ahgcount++;
-				qp->s_hdr->ahgdesc[1] =
+				priv->s_hdr->ahgcount++;
+				priv->s_hdr->ahgdesc[1] =
 					sdma_build_ahg_descriptor(
 						(__force u16)cpu_to_be16(
 							(u16)(npsn >> 16)),
@@ -771,6 +774,7 @@ void hfi1_make_ruc_header(struct hfi1_qp *qp, struct hfi1_other_headers *ohdr,
 			  u32 bth0, u32 bth2, int middle)
 {
 	struct hfi1_ibport *ibp = to_iport(qp->ibqp.device, qp->port_num);
+	struct hfi1_qp_priv *priv = qp->priv;
 	u16 lrh0;
 	u32 nwords;
 	u32 extra_bytes;
@@ -782,15 +786,15 @@ void hfi1_make_ruc_header(struct hfi1_qp *qp, struct hfi1_other_headers *ohdr,
 	nwords = (qp->s_cur_size + extra_bytes) >> 2;
 	lrh0 = HFI1_LRH_BTH;
 	if (unlikely(qp->remote_ah_attr.ah_flags & IB_AH_GRH)) {
-		qp->s_hdrwords += hfi1_make_grh(ibp, &qp->s_hdr->ibh.u.l.grh,
-					       &qp->remote_ah_attr.grh,
-					       qp->s_hdrwords, nwords);
+		qp->s_hdrwords += hfi1_make_grh(ibp, &priv->s_hdr->ibh.u.l.grh,
+						&qp->remote_ah_attr.grh,
+						qp->s_hdrwords, nwords);
 		lrh0 = HFI1_LRH_GRH;
 		middle = 0;
 	}
 	sc5 = ibp->sl_to_sc[qp->remote_ah_attr.sl];
 	lrh0 |= (sc5 & 0xf) << 12 | (qp->remote_ah_attr.sl & 0xf) << 4;
-	qp->s_sc = sc5;
+	priv->s_sc = sc5;
 	/*
 	 * reset s_hdr/AHG fields
 	 *
@@ -802,10 +806,10 @@ void hfi1_make_ruc_header(struct hfi1_qp *qp, struct hfi1_other_headers *ohdr,
 	 * build_ahg() will modify as appropriate
 	 * to use the AHG feature.
 	 */
-	qp->s_hdr->tx_flags = 0;
-	qp->s_hdr->ahgcount = 0;
-	qp->s_hdr->ahgidx = 0;
-	qp->s_hdr->sde = NULL;
+	priv->s_hdr->tx_flags = 0;
+	priv->s_hdr->ahgcount = 0;
+	priv->s_hdr->ahgidx = 0;
+	priv->s_hdr->sde = NULL;
 	if (qp->s_mig_state == IB_MIG_MIGRATED)
 		bth0 |= IB_BTH_MIG_REQ;
 	else
@@ -814,11 +818,11 @@ void hfi1_make_ruc_header(struct hfi1_qp *qp, struct hfi1_other_headers *ohdr,
 		build_ahg(qp, bth2);
 	else
 		qp->s_flags &= ~HFI1_S_AHG_VALID;
-	qp->s_hdr->ibh.lrh[0] = cpu_to_be16(lrh0);
-	qp->s_hdr->ibh.lrh[1] = cpu_to_be16(qp->remote_ah_attr.dlid);
-	qp->s_hdr->ibh.lrh[2] =
+	priv->s_hdr->ibh.lrh[0] = cpu_to_be16(lrh0);
+	priv->s_hdr->ibh.lrh[1] = cpu_to_be16(qp->remote_ah_attr.dlid);
+	priv->s_hdr->ibh.lrh[2] =
 		cpu_to_be16(qp->s_hdrwords + nwords + SIZE_OF_CRC);
-	qp->s_hdr->ibh.lrh[3] = cpu_to_be16(ppd_from_ibp(ibp)->lid |
+	priv->s_hdr->ibh.lrh[3] = cpu_to_be16(ppd_from_ibp(ibp)->lid |
 				       qp->remote_ah_attr.src_path_bits);
 	bth0 |= hfi1_get_pkey(ibp, qp->s_pkey_index);
 	bth0 |= extra_bytes << 20;
@@ -844,7 +848,8 @@ void hfi1_make_ruc_header(struct hfi1_qp *qp, struct hfi1_other_headers *ohdr,
 void hfi1_do_send(struct work_struct *work)
 {
 	struct iowait *wait = container_of(work, struct iowait, iowork);
-	struct hfi1_qp *qp = container_of(wait, struct hfi1_qp, s_iowait);
+	struct hfi1_qp *qp = iowait_to_qp(wait);
+	struct hfi1_qp_priv *priv = qp->priv;
 	struct hfi1_ibport *ibp = to_iport(qp->ibqp.device, qp->port_num);
 	struct hfi1_pportdata *ppd = ppd_from_ibp(ibp);
 	int (*make_req)(struct hfi1_qp *qp);
@@ -884,7 +889,8 @@ void hfi1_do_send(struct work_struct *work)
 			 * If the packet cannot be sent now, return and
 			 * the send tasklet will be woken up later.
 			 */
-			if (hfi1_verbs_send(qp, qp->s_hdr, qp->s_hdrwords,
+			if (hfi1_verbs_send(qp, priv->s_hdr,
+					    qp->s_hdrwords,
 					    qp->s_cur_sge, qp->s_cur_size))
 				break;
 			/* Record that s_hdr is empty. */
