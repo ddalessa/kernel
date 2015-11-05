@@ -167,9 +167,9 @@ __be64 ib_qib_sys_image_guid;
  * @data: the data to copy
  * @length: the length of the data
  */
-void qib_copy_sge(struct qib_sge_state *ss, void *data, u32 length, int release)
+void qib_copy_sge(struct rvt_sge_state *ss, void *data, u32 length, int release)
 {
-	struct qib_sge *sge = &ss->sge;
+	struct rvt_sge *sge = &ss->sge;
 
 	while (length) {
 		u32 len = sge->length;
@@ -209,9 +209,9 @@ void qib_copy_sge(struct qib_sge_state *ss, void *data, u32 length, int release)
  * @ss: the SGE state
  * @length: the number of bytes to skip
  */
-void qib_skip_sge(struct qib_sge_state *ss, u32 length, int release)
+void qib_skip_sge(struct rvt_sge_state *ss, u32 length, int release)
 {
-	struct qib_sge *sge = &ss->sge;
+	struct rvt_sge *sge = &ss->sge;
 
 	while (length) {
 		u32 len = sge->length;
@@ -249,10 +249,10 @@ void qib_skip_sge(struct qib_sge_state *ss, u32 length, int release)
  * Don't modify the qib_sge_state to get the count.
  * Return zero if any of the segments is not aligned.
  */
-static u32 qib_count_sge(struct qib_sge_state *ss, u32 length)
+static u32 qib_count_sge(struct rvt_sge_state *ss, u32 length)
 {
-	struct qib_sge *sg_list = ss->sg_list;
-	struct qib_sge sge = ss->sge;
+	struct rvt_sge *sg_list = ss->sg_list;
+	struct rvt_sge sge = ss->sge;
 	u8 num_sge = ss->num_sge;
 	u32 ndesc = 1;  /* count the header */
 
@@ -295,9 +295,9 @@ static u32 qib_count_sge(struct qib_sge_state *ss, u32 length)
 /*
  * Copy from the SGEs to the data buffer.
  */
-static void qib_copy_from_sge(void *data, struct qib_sge_state *ss, u32 length)
+static void qib_copy_from_sge(void *data, struct rvt_sge_state *ss, u32 length)
 {
-	struct qib_sge *sge = &ss->sge;
+	struct rvt_sge *sge = &ss->sge;
 
 	while (length) {
 		u32 len = sge->length;
@@ -335,10 +335,10 @@ static void qib_copy_from_sge(void *data, struct qib_sge_state *ss, u32 length)
  * @qp: the QP to post on
  * @wr: the work request to send
  */
-static int qib_post_one_send(struct qib_qp *qp, struct ib_send_wr *wr,
-	int *scheduled)
+static int qib_post_one_send(struct rvt_qp *qp, struct ib_send_wr *wr,
+			     int *scheduled)
 {
-	struct qib_swqe *wqe;
+	struct rvt_swqe *wqe;
 	u32 next;
 	int i;
 	int j;
@@ -436,7 +436,7 @@ static int qib_post_one_send(struct qib_qp *qp, struct ib_send_wr *wr,
 
 bail_inval_free:
 	while (j) {
-		struct qib_sge *sge = &wqe->sg_list[--j];
+		struct rvt_sge *sge = &wqe->sg_list[--j];
 
 		qib_put_mr(sge->mr);
 	}
@@ -464,7 +464,7 @@ bail:
 static int qib_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
 			 struct ib_send_wr **bad_wr)
 {
-	struct qib_qp *qp = to_iqp(ibqp);
+	struct rvt_qp *qp = to_iqp(ibqp);
 	struct qib_qp_priv *priv = qp->priv;
 	int err = 0;
 	int scheduled = 0;
@@ -496,8 +496,8 @@ bail:
 static int qib_post_receive(struct ib_qp *ibqp, struct ib_recv_wr *wr,
 			    struct ib_recv_wr **bad_wr)
 {
-	struct qib_qp *qp = to_iqp(ibqp);
-	struct qib_rwq *wq = qp->r_rq.wq;
+	struct rvt_qp *qp = to_iqp(ibqp);
+	struct rvt_rwq *wq = qp->r_rq.wq;
 	unsigned long flags;
 	int ret;
 
@@ -509,7 +509,7 @@ static int qib_post_receive(struct ib_qp *ibqp, struct ib_recv_wr *wr,
 	}
 
 	for (; wr; wr = wr->next) {
-		struct qib_rwqe *wqe;
+		struct rvt_rwqe *wqe;
 		u32 next;
 		int i;
 
@@ -560,7 +560,7 @@ bail:
  * Called at interrupt level.
  */
 static void qib_qp_rcv(struct qib_ctxtdata *rcd, struct qib_ib_header *hdr,
-		       int has_grh, void *data, u32 tlen, struct qib_qp *qp)
+		       int has_grh, void *data, u32 tlen, struct rvt_qp *qp)
 {
 	struct qib_ibport *ibp = &rcd->ppd->ibport_data;
 
@@ -614,7 +614,7 @@ void qib_ib_rcv(struct qib_ctxtdata *rcd, void *rhdr, void *data, u32 tlen)
 	struct qib_ibport *ibp = &ppd->ibport_data;
 	struct qib_ib_header *hdr = rhdr;
 	struct qib_other_headers *ohdr;
-	struct qib_qp *qp;
+	struct rvt_qp *qp;
 	u32 qp_num;
 	int lnh;
 	u8 opcode;
@@ -709,7 +709,7 @@ static void mem_timer(unsigned long data)
 {
 	struct qib_ibdev *dev = (struct qib_ibdev *) data;
 	struct list_head *list = &dev->memwait;
-	struct qib_qp *qp = NULL;
+	struct rvt_qp *qp = NULL;
 	struct qib_qp_priv *priv = NULL;
 	unsigned long flags;
 
@@ -736,9 +736,9 @@ static void mem_timer(unsigned long data)
 	}
 }
 
-static void update_sge(struct qib_sge_state *ss, u32 length)
+static void update_sge(struct rvt_sge_state *ss, u32 length)
 {
-	struct qib_sge *sge = &ss->sge;
+	struct rvt_sge *sge = &ss->sge;
 
 	sge->vaddr += length;
 	sge->length -= length;
@@ -793,7 +793,7 @@ static inline u32 clear_upper_bytes(u32 data, u32 n, u32 off)
 }
 #endif
 
-static void copy_io(u32 __iomem *piobuf, struct qib_sge_state *ss,
+static void copy_io(u32 __iomem *piobuf, struct rvt_sge_state *ss,
 		    u32 length, unsigned flush_wc)
 {
 	u32 extra = 0;
@@ -930,7 +930,7 @@ static void copy_io(u32 __iomem *piobuf, struct qib_sge_state *ss,
 }
 
 static noinline struct qib_verbs_txreq *__get_txreq(struct qib_ibdev *dev,
-					   struct qib_qp *qp)
+					   struct rvt_qp *qp)
 {
 	struct qib_qp_priv *priv = qp->priv;
 	struct qib_verbs_txreq *tx;
@@ -962,7 +962,7 @@ static noinline struct qib_verbs_txreq *__get_txreq(struct qib_ibdev *dev,
 }
 
 static inline struct qib_verbs_txreq *get_txreq(struct qib_ibdev *dev,
-					 struct qib_qp *qp)
+					 struct rvt_qp *qp)
 {
 	struct qib_verbs_txreq *tx;
 	unsigned long flags;
@@ -986,7 +986,7 @@ static inline struct qib_verbs_txreq *get_txreq(struct qib_ibdev *dev,
 void qib_put_txreq(struct qib_verbs_txreq *tx)
 {
 	struct qib_ibdev *dev;
-	struct qib_qp *qp;
+	struct rvt_qp *qp;
 	struct qib_qp_priv *priv;
 	unsigned long flags;
 
@@ -1042,9 +1042,9 @@ void qib_put_txreq(struct qib_verbs_txreq *tx)
  */
 void qib_verbs_sdma_desc_avail(struct qib_pportdata *ppd, unsigned avail)
 {
-	struct qib_qp *qp, *nqp;
+	struct rvt_qp *qp, *nqp;
 	struct qib_qp_priv *qpp, *nqpp, *priv;
-	struct qib_qp *qps[20];
+	struct rvt_qp *qps[20];
 	struct qib_ibdev *dev;
 	unsigned i, n;
 
@@ -1091,7 +1091,7 @@ static void sdma_complete(struct qib_sdma_txreq *cookie, int status)
 {
 	struct qib_verbs_txreq *tx =
 		container_of(cookie, struct qib_verbs_txreq, txreq);
-	struct qib_qp *qp = tx->qp;
+	struct rvt_qp *qp = tx->qp;
 	struct qib_qp_priv *priv = qp->priv;
 
 	spin_lock(&qp->s_lock);
@@ -1122,7 +1122,7 @@ static void sdma_complete(struct qib_sdma_txreq *cookie, int status)
 	qib_put_txreq(tx);
 }
 
-static int wait_kmem(struct qib_ibdev *dev, struct qib_qp *qp)
+static int wait_kmem(struct qib_ibdev *dev, struct rvt_qp *qp)
 {
 	struct qib_qp_priv *priv = qp->priv;
 	unsigned long flags;
@@ -1146,8 +1146,8 @@ static int wait_kmem(struct qib_ibdev *dev, struct qib_qp *qp)
 	return ret;
 }
 
-static int qib_verbs_send_dma(struct qib_qp *qp, struct qib_ib_header *hdr,
-			      u32 hdrwords, struct qib_sge_state *ss, u32 len,
+static int qib_verbs_send_dma(struct rvt_qp *qp, struct qib_ib_header *hdr,
+			      u32 hdrwords, struct rvt_sge_state *ss, u32 len,
 			      u32 plen, u32 dwords)
 {
 	struct qib_qp_priv *priv = qp->priv;
@@ -1251,7 +1251,7 @@ bail_tx:
  * If we are now in the error state, return zero to flush the
  * send work request.
  */
-static int no_bufs_available(struct qib_qp *qp)
+static int no_bufs_available(struct rvt_qp *qp)
 {
 	struct qib_qp_priv *priv = qp->priv;
 	struct qib_ibdev *dev = to_idev(qp->ibqp.device);
@@ -1283,8 +1283,8 @@ static int no_bufs_available(struct qib_qp *qp)
 	return ret;
 }
 
-static int qib_verbs_send_pio(struct qib_qp *qp, struct qib_ib_header *ibhdr,
-			      u32 hdrwords, struct qib_sge_state *ss, u32 len,
+static int qib_verbs_send_pio(struct rvt_qp *qp, struct qib_ib_header *ibhdr,
+			      u32 hdrwords, struct rvt_sge_state *ss, u32 len,
 			      u32 plen, u32 dwords)
 {
 	struct qib_devdata *dd = dd_from_ibdev(qp->ibqp.device);
@@ -1391,8 +1391,8 @@ done:
  * Return zero if packet is sent or queued OK.
  * Return non-zero and clear qp->s_flags QIB_S_BUSY otherwise.
  */
-int qib_verbs_send(struct qib_qp *qp, struct qib_ib_header *hdr,
-		   u32 hdrwords, struct qib_sge_state *ss, u32 len)
+int qib_verbs_send(struct rvt_qp *qp, struct qib_ib_header *hdr,
+		   u32 hdrwords, struct rvt_sge_state *ss, u32 len)
 {
 	struct qib_devdata *dd = dd_from_ibdev(qp->ibqp.device);
 	u32 plen;
@@ -1524,8 +1524,8 @@ void qib_ib_piobufavail(struct qib_devdata *dd)
 {
 	struct qib_ibdev *dev = &dd->verbs_dev;
 	struct list_head *list;
-	struct qib_qp *qps[5];
-	struct qib_qp *qp;
+	struct rvt_qp *qps[5];
+	struct rvt_qp *qp;
 	unsigned long flags;
 	unsigned i, n;
 	struct qib_qp_priv *priv;
@@ -1828,7 +1828,7 @@ struct ib_ah *qib_create_qp0_ah(struct qib_ibport *ibp, u16 dlid)
 {
 	struct ib_ah_attr attr;
 	struct ib_ah *ah = ERR_PTR(-EINVAL);
-	struct qib_qp *qp0;
+	struct rvt_qp *qp0;
 
 	memset(&attr, 0, sizeof(attr));
 	attr.dlid = dlid;
@@ -2323,7 +2323,7 @@ void qib_unregister_ib_device(struct qib_devdata *dd)
 /*
  * This must be called with s_lock held.
  */
-void qib_schedule_send(struct qib_qp *qp)
+void qib_schedule_send(struct rvt_qp *qp)
 {
 	struct qib_qp_priv *priv = qp->priv;
 	if (qib_send_ok(qp)) {

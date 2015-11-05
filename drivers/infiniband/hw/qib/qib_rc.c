@@ -40,7 +40,7 @@
 
 static void rc_timeout(unsigned long arg);
 
-static u32 restart_sge(struct qib_sge_state *ss, struct qib_swqe *wqe,
+static u32 restart_sge(struct rvt_sge_state *ss, struct rvt_swqe *wqe,
 		       u32 psn, u32 pmtu)
 {
 	u32 len;
@@ -54,7 +54,7 @@ static u32 restart_sge(struct qib_sge_state *ss, struct qib_swqe *wqe,
 	return wqe->length - len;
 }
 
-static void start_timer(struct qib_qp *qp)
+static void start_timer(struct rvt_qp *qp)
 {
 	qp->s_flags |= QIB_S_TIMER;
 	qp->s_timer.function = rc_timeout;
@@ -74,10 +74,10 @@ static void start_timer(struct qib_qp *qp)
  * Note that we are in the responder's side of the QP context.
  * Note the QP s_lock must be held.
  */
-static int qib_make_rc_ack(struct qib_ibdev *dev, struct qib_qp *qp,
+static int qib_make_rc_ack(struct qib_ibdev *dev, struct rvt_qp *qp,
 			   struct qib_other_headers *ohdr, u32 pmtu)
 {
-	struct qib_ack_entry *e;
+	struct rvt_ack_entry *e;
 	u32 hwords;
 	u32 len;
 	u32 bth0;
@@ -228,13 +228,13 @@ bail:
  *
  * Return 1 if constructed; otherwise, return 0.
  */
-int qib_make_rc_req(struct qib_qp *qp)
+int qib_make_rc_req(struct rvt_qp *qp)
 {
 	struct qib_qp_priv *priv = qp->priv;
 	struct qib_ibdev *dev = to_idev(qp->ibqp.device);
 	struct qib_other_headers *ohdr;
-	struct qib_sge_state *ss;
-	struct qib_swqe *wqe;
+	struct rvt_sge_state *ss;
+	struct rvt_swqe *wqe;
 	u32 hwords;
 	u32 len;
 	u32 bth0;
@@ -646,7 +646,7 @@ unlock:
  * Note that RDMA reads and atomics are handled in the
  * send side QP state and tasklet.
  */
-void qib_send_rc_ack(struct qib_qp *qp)
+void qib_send_rc_ack(struct rvt_qp *qp)
 {
 	struct qib_devdata *dd = dd_from_ibdev(qp->ibqp.device);
 	struct qib_ibport *ibp = to_iport(qp->ibqp.device, qp->port_num);
@@ -781,10 +781,10 @@ done:
  * for the given QP.
  * Called at interrupt level with the QP s_lock held.
  */
-static void reset_psn(struct qib_qp *qp, u32 psn)
+static void reset_psn(struct rvt_qp *qp, u32 psn)
 {
 	u32 n = qp->s_acked;
-	struct qib_swqe *wqe = get_swqe_ptr(qp, n);
+	struct rvt_swqe *wqe = get_swqe_ptr(qp, n);
 	u32 opcode;
 
 	qp->s_cur = n;
@@ -866,9 +866,9 @@ done:
  * Back up requester to resend the last un-ACKed request.
  * The QP r_lock and s_lock should be held and interrupts disabled.
  */
-static void qib_restart_rc(struct qib_qp *qp, u32 psn, int wait)
+static void qib_restart_rc(struct rvt_qp *qp, u32 psn, int wait)
 {
-	struct qib_swqe *wqe = get_swqe_ptr(qp, qp->s_acked);
+	struct rvt_swqe *wqe = get_swqe_ptr(qp, qp->s_acked);
 	struct qib_ibport *ibp;
 
 	if (qp->s_retry == 0) {
@@ -903,7 +903,7 @@ static void qib_restart_rc(struct qib_qp *qp, u32 psn, int wait)
  */
 static void rc_timeout(unsigned long arg)
 {
-	struct qib_qp *qp = (struct qib_qp *)arg;
+	struct rvt_qp *qp = (struct rvt_qp *)arg;
 	struct qib_ibport *ibp;
 	unsigned long flags;
 
@@ -926,7 +926,7 @@ static void rc_timeout(unsigned long arg)
  */
 void qib_rc_rnr_retry(unsigned long arg)
 {
-	struct qib_qp *qp = (struct qib_qp *)arg;
+	struct rvt_qp *qp = (struct rvt_qp *)arg;
 	unsigned long flags;
 
 	spin_lock_irqsave(&qp->s_lock, flags);
@@ -942,9 +942,9 @@ void qib_rc_rnr_retry(unsigned long arg)
  * Set qp->s_sending_psn to the next PSN after the given one.
  * This would be psn+1 except when RDMA reads are present.
  */
-static void reset_sending_psn(struct qib_qp *qp, u32 psn)
+static void reset_sending_psn(struct rvt_qp *qp, u32 psn)
 {
-	struct qib_swqe *wqe;
+	struct rvt_swqe *wqe;
 	u32 n = qp->s_last;
 
 	/* Find the work request corresponding to the given PSN. */
@@ -967,10 +967,10 @@ static void reset_sending_psn(struct qib_qp *qp, u32 psn)
 /*
  * This should be called with the QP s_lock held and interrupts disabled.
  */
-void qib_rc_send_complete(struct qib_qp *qp, struct qib_ib_header *hdr)
+void qib_rc_send_complete(struct rvt_qp *qp, struct qib_ib_header *hdr)
 {
 	struct qib_other_headers *ohdr;
-	struct qib_swqe *wqe;
+	struct rvt_swqe *wqe;
 	struct ib_wc wc;
 	unsigned i;
 	u32 opcode;
@@ -1011,7 +1011,7 @@ void qib_rc_send_complete(struct qib_qp *qp, struct qib_ib_header *hdr)
 		    qib_cmp24(qp->s_sending_psn, qp->s_sending_hpsn) <= 0)
 			break;
 		for (i = 0; i < wqe->wr.num_sge; i++) {
-			struct qib_sge *sge = &wqe->sg_list[i];
+			struct rvt_sge *sge = &wqe->sg_list[i];
 
 			qib_put_mr(sge->mr);
 		}
@@ -1042,7 +1042,7 @@ void qib_rc_send_complete(struct qib_qp *qp, struct qib_ib_header *hdr)
 	}
 }
 
-static inline void update_last_psn(struct qib_qp *qp, u32 psn)
+static inline void update_last_psn(struct rvt_qp *qp, u32 psn)
 {
 	qp->s_last_psn = psn;
 }
@@ -1052,8 +1052,8 @@ static inline void update_last_psn(struct qib_qp *qp, u32 psn)
  * This is similar to qib_send_complete but has to check to be sure
  * that the SGEs are not being referenced if the SWQE is being resent.
  */
-static struct qib_swqe *do_rc_completion(struct qib_qp *qp,
-					 struct qib_swqe *wqe,
+static struct rvt_swqe *do_rc_completion(struct rvt_qp *qp,
+					 struct rvt_swqe *wqe,
 					 struct qib_ibport *ibp)
 {
 	struct ib_wc wc;
@@ -1067,7 +1067,7 @@ static struct qib_swqe *do_rc_completion(struct qib_qp *qp,
 	if (qib_cmp24(wqe->lpsn, qp->s_sending_psn) < 0 ||
 	    qib_cmp24(qp->s_sending_psn, qp->s_sending_hpsn) > 0) {
 		for (i = 0; i < wqe->wr.num_sge; i++) {
-			struct qib_sge *sge = &wqe->sg_list[i];
+			struct rvt_sge *sge = &wqe->sg_list[i];
 
 			qib_put_mr(sge->mr);
 		}
@@ -1125,12 +1125,12 @@ static struct qib_swqe *do_rc_completion(struct qib_qp *qp,
  * Called at interrupt level with the QP s_lock held.
  * Returns 1 if OK, 0 if current operation should be aborted (NAK).
  */
-static int do_rc_ack(struct qib_qp *qp, u32 aeth, u32 psn, int opcode,
+static int do_rc_ack(struct rvt_qp *qp, u32 aeth, u32 psn, int opcode,
 		     u64 val, struct qib_ctxtdata *rcd)
 {
 	struct qib_ibport *ibp;
 	enum ib_wc_status status;
-	struct qib_swqe *wqe;
+	struct rvt_swqe *wqe;
 	int ret = 0;
 	u32 ack_psn;
 	int diff;
@@ -1348,10 +1348,10 @@ bail:
  * We have seen an out of sequence RDMA read middle or last packet.
  * This ACKs SENDs and RDMA writes up to the first RDMA read or atomic SWQE.
  */
-static void rdma_seq_err(struct qib_qp *qp, struct qib_ibport *ibp, u32 psn,
+static void rdma_seq_err(struct rvt_qp *qp, struct qib_ibport *ibp, u32 psn,
 			 struct qib_ctxtdata *rcd)
 {
-	struct qib_swqe *wqe;
+	struct rvt_swqe *wqe;
 
 	/* Remove QP from retry timer */
 	if (qp->s_flags & (QIB_S_TIMER | QIB_S_WAIT_RNR)) {
@@ -1398,12 +1398,12 @@ static void rdma_seq_err(struct qib_qp *qp, struct qib_ibport *ibp, u32 psn,
 static void qib_rc_rcv_resp(struct qib_ibport *ibp,
 			    struct qib_other_headers *ohdr,
 			    void *data, u32 tlen,
-			    struct qib_qp *qp,
+			    struct rvt_qp *qp,
 			    u32 opcode,
 			    u32 psn, u32 hdrsize, u32 pmtu,
 			    struct qib_ctxtdata *rcd)
 {
-	struct qib_swqe *wqe;
+	struct rvt_swqe *wqe;
 	struct qib_pportdata *ppd = ppd_from_ibp(ibp);
 	enum ib_wc_status status;
 	unsigned long flags;
@@ -1622,14 +1622,14 @@ bail:
  */
 static int qib_rc_rcv_error(struct qib_other_headers *ohdr,
 			    void *data,
-			    struct qib_qp *qp,
+			    struct rvt_qp *qp,
 			    u32 opcode,
 			    u32 psn,
 			    int diff,
 			    struct qib_ctxtdata *rcd)
 {
 	struct qib_ibport *ibp = to_iport(qp->ibqp.device, qp->port_num);
-	struct qib_ack_entry *e;
+	struct rvt_ack_entry *e;
 	unsigned long flags;
 	u8 i, prev;
 	int old_req;
@@ -1817,7 +1817,7 @@ send_ack:
 	return 0;
 }
 
-void qib_rc_error(struct qib_qp *qp, enum ib_wc_status err)
+void qib_rc_error(struct rvt_qp *qp, enum ib_wc_status err)
 {
 	unsigned long flags;
 	int lastwqe;
@@ -1836,7 +1836,7 @@ void qib_rc_error(struct qib_qp *qp, enum ib_wc_status err)
 	}
 }
 
-static inline void qib_update_ack_queue(struct qib_qp *qp, unsigned n)
+static inline void qib_update_ack_queue(struct rvt_qp *qp, unsigned n)
 {
 	unsigned next;
 
@@ -1861,7 +1861,7 @@ static inline void qib_update_ack_queue(struct qib_qp *qp, unsigned n)
  * Called at interrupt level.
  */
 void qib_rc_rcv(struct qib_ctxtdata *rcd, struct qib_ib_header *hdr,
-		int has_grh, void *data, u32 tlen, struct qib_qp *qp)
+		int has_grh, void *data, u32 tlen, struct rvt_qp *qp)
 {
 	struct qib_ibport *ibp = &rcd->ppd->ibport_data;
 	struct qib_other_headers *ohdr;
@@ -2095,7 +2095,7 @@ send_last:
 		goto send_last;
 
 	case OP(RDMA_READ_REQUEST): {
-		struct qib_ack_entry *e;
+		struct rvt_ack_entry *e;
 		u32 len;
 		u8 next;
 
@@ -2165,7 +2165,7 @@ send_last:
 	case OP(COMPARE_SWAP):
 	case OP(FETCH_ADD): {
 		struct ib_atomic_eth *ateth;
-		struct qib_ack_entry *e;
+		struct rvt_ack_entry *e;
 		u64 vaddr;
 		atomic64_t *maddr;
 		u64 sdata;

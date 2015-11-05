@@ -79,13 +79,13 @@ const u32 ib_qib_rnr_table[32] = {
  * Validate a RWQE and fill in the SGE state.
  * Return 1 if OK.
  */
-static int qib_init_sge(struct qib_qp *qp, struct qib_rwqe *wqe)
+static int qib_init_sge(struct rvt_qp *qp, struct rvt_rwqe *wqe)
 {
 	int i, j, ret;
 	struct ib_wc wc;
 	struct rvt_lkey_table *rkt;
 	struct rvt_pd *pd;
-	struct qib_sge_state *ss;
+	struct rvt_sge_state *ss;
 
 	rkt = &to_idev(qp->ibqp.device)->lk_table;
 	pd = to_ipd(qp->ibqp.srq ? qp->ibqp.srq->pd : qp->ibqp.pd);
@@ -109,7 +109,7 @@ static int qib_init_sge(struct qib_qp *qp, struct qib_rwqe *wqe)
 
 bad_lkey:
 	while (j) {
-		struct qib_sge *sge = --j ? &ss->sg_list[j - 1] : &ss->sge;
+		struct rvt_sge *sge = --j ? &ss->sg_list[j - 1] : &ss->sge;
 
 		qib_put_mr(sge->mr);
 	}
@@ -136,13 +136,13 @@ bail:
  *
  * Can be called from interrupt level.
  */
-int qib_get_rwqe(struct qib_qp *qp, int wr_id_only)
+int qib_get_rwqe(struct rvt_qp *qp, int wr_id_only)
 {
 	unsigned long flags;
-	struct qib_rq *rq;
-	struct qib_rwq *wq;
+	struct rvt_rq *rq;
+	struct rvt_rwq *wq;
 	struct qib_srq *srq;
-	struct qib_rwqe *wqe;
+	struct rvt_rwqe *wqe;
 	void (*handler)(struct ib_event *, void *);
 	u32 tail;
 	int ret;
@@ -227,7 +227,7 @@ bail:
  * Switch to alternate path.
  * The QP s_lock should be held and interrupts disabled.
  */
-void qib_migrate_qp(struct qib_qp *qp)
+void qib_migrate_qp(struct rvt_qp *qp)
 {
 	struct ib_event ev;
 
@@ -266,7 +266,7 @@ static int gid_ok(union ib_gid *gid, __be64 gid_prefix, __be64 id)
  * The s_lock will be acquired around the qib_migrate_qp() call.
  */
 int qib_ruc_check_hdr(struct qib_ibport *ibp, struct qib_ib_header *hdr,
-		      int has_grh, struct qib_qp *qp, u32 bth0)
+		      int has_grh, struct rvt_qp *qp, u32 bth0)
 {
 	__be64 guid;
 	unsigned long flags;
@@ -353,12 +353,12 @@ err:
  * receive interrupts since this is a connected protocol and all packets
  * will pass through here.
  */
-static void qib_ruc_loopback(struct qib_qp *sqp)
+static void qib_ruc_loopback(struct rvt_qp *sqp)
 {
 	struct qib_ibport *ibp = to_iport(sqp->ibqp.device, sqp->port_num);
-	struct qib_qp *qp;
-	struct qib_swqe *wqe;
-	struct qib_sge *sge;
+	struct rvt_qp *qp;
+	struct rvt_swqe *wqe;
+	struct rvt_sge *sge;
 	unsigned long flags;
 	struct ib_wc wc;
 	u64 sdata;
@@ -672,7 +672,7 @@ u32 qib_make_grh(struct qib_ibport *ibp, struct ib_grh *hdr,
 	return sizeof(struct ib_grh) / sizeof(u32);
 }
 
-void qib_make_ruc_header(struct qib_qp *qp, struct qib_other_headers *ohdr,
+void qib_make_ruc_header(struct rvt_qp *qp, struct qib_other_headers *ohdr,
 			 u32 bth0, u32 bth2)
 {
 	struct qib_qp_priv *priv = qp->priv;
@@ -721,10 +721,10 @@ void qib_do_send(struct work_struct *work)
 {
 	struct qib_qp_priv *priv = container_of(work, struct qib_qp_priv,
 						s_work);
-	struct qib_qp *qp = priv->owner;
+	struct rvt_qp *qp = priv->owner;
 	struct qib_ibport *ibp = to_iport(qp->ibqp.device, qp->port_num);
 	struct qib_pportdata *ppd = ppd_from_ibp(ibp);
-	int (*make_req)(struct qib_qp *qp);
+	int (*make_req)(struct rvt_qp *qp);
 	unsigned long flags;
 
 	if ((qp->ibqp.qp_type == IB_QPT_RC ||
@@ -772,7 +772,7 @@ void qib_do_send(struct work_struct *work)
 /*
  * This should be called with s_lock held.
  */
-void qib_send_complete(struct qib_qp *qp, struct qib_swqe *wqe,
+void qib_send_complete(struct rvt_qp *qp, struct rvt_swqe *wqe,
 		       enum ib_wc_status status)
 {
 	u32 old_last, last;
@@ -782,7 +782,7 @@ void qib_send_complete(struct qib_qp *qp, struct qib_swqe *wqe,
 		return;
 
 	for (i = 0; i < wqe->wr.num_sge; i++) {
-		struct qib_sge *sge = &wqe->sg_list[i];
+		struct rvt_sge *sge = &wqe->sg_list[i];
 
 		qib_put_mr(sge->mr);
 	}

@@ -153,7 +153,7 @@ out:
  * of it.
  */
 int qib_lkey_ok(struct rvt_lkey_table *rkt, struct rvt_pd *pd,
-		struct qib_sge *isge, struct ib_sge *sge, int acc)
+		struct rvt_sge *isge, struct ib_sge *sge, int acc)
 {
 	struct rvt_mregion *mr;
 	unsigned n, m;
@@ -249,7 +249,7 @@ bail:
  *
  * increments the reference count upon success
  */
-int qib_rkey_ok(struct qib_qp *qp, struct qib_sge *sge,
+int qib_rkey_ok(struct rvt_qp *qp, struct rvt_sge *sge,
 		u32 len, u64 vaddr, u32 rkey, int acc)
 {
 	struct rvt_lkey_table *rkt = &to_idev(qp->ibqp.device)->lk_table;
@@ -338,7 +338,7 @@ bail:
 /*
  * Initialize the memory region specified by the work reqeust.
  */
-int qib_fast_reg_mr(struct qib_qp *qp, struct ib_send_wr *wr)
+int qib_fast_reg_mr(struct rvt_qp *qp, struct ib_send_wr *wr)
 {
 	struct rvt_lkey_table *rkt = &to_idev(qp->ibqp.device)->lk_table;
 	struct rvt_pd *pd = to_ipd(qp->ibqp.pd);
