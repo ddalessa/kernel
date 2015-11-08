@@ -390,6 +390,13 @@ struct rvt_pd {
 	int user;               /* non-zero if created from user space */
 };
 
+/* Address handle */
+struct rvt_ah {
+	struct ib_ah ibah;
+	struct ib_ah_attr attr;
+	atomic_t refcount;
+};
+
 struct rvt_dev_info {
 	/*
 	 * Prior to calling for registration the driver will be responsible for
@@ -418,10 +425,17 @@ struct rvt_dev_info {
 	 * this.
 	 */
 	int (*port_callback)(struct ib_device *, u8, struct kobject *);
+	/*
+	 * Drivers that do specific checks to the address handle attributes
+	 * should set this callback.
+	 */
+	int (*check_ah)(struct ib_device *, struct ib_ah_attr *);
 
 	/* Internal use */
 	int n_pds_allocated;
 	spinlock_t n_pds_lock; /* Protect pd allocated count */
+	int n_ahs_allocated;
+	spinlock_t n_ahs_lock; /* Protect ah allocated count */
 };
 
 static inline struct rvt_pd *to_ipd(struct ib_pd *ibpd)
@@ -429,11 +443,17 @@ static inline struct rvt_pd *to_ipd(struct ib_pd *ibpd)
 	return container_of(ibpd, struct rvt_pd, ibpd);
 }
 
+static inline struct rvt_ah *to_iah(struct ib_ah *ibah)
+{
+	return container_of(ibah, struct rvt_ah, ibah);
+}
+
 static inline struct rvt_dev_info *ib_to_rvt(struct ib_device *ibdev)
 {
 	return  container_of(ibdev, struct rvt_dev_info, ibdev);
 }
 
+int rvt_check_ah(struct ib_device *ibdev, struct ib_ah_attr *ah_attr);
 int rvt_register_device(struct rvt_dev_info *rvd);
 void rvt_unregister_device(struct rvt_dev_info *rvd);
 

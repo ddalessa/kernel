@@ -438,7 +438,7 @@ static int post_one_send(struct rvt_qp *qp, struct ib_send_wr *wr)
 		if (wqe->length > 0x80000000U)
 			goto bail_inval_free;
 	} else {
-		struct hfi1_ah *ah = to_iah(wr->wr.ud.ah);
+		struct rvt_ah *ah = to_iah(wr->wr.ud.ah);
 
 		atomic_inc(&ah->refcount);
 	}
@@ -1616,81 +1616,14 @@ int hfi1_check_ah(struct ib_device *ibdev, struct ib_ah_attr *ah_attr)
 	struct hfi1_devdata *dd;
 	u8 sc5;
 
-	/* A multicast address requires a GRH (see ch. 8.4.1). */
-	if (ah_attr->dlid >= RVT_MULTICAST_LID_BASE &&
-	    ah_attr->dlid != RVT_PERMISSIVE_LID &&
-	    !(ah_attr->ah_flags & IB_AH_GRH))
-		goto bail;
-	if ((ah_attr->ah_flags & IB_AH_GRH) &&
-	    ah_attr->grh.sgid_index >= HFI1_GUIDS_PER_PORT)
-		goto bail;
-	if (ah_attr->dlid == 0)
-		goto bail;
-	if (ah_attr->port_num < 1 ||
-	    ah_attr->port_num > ibdev->phys_port_cnt)
-		goto bail;
-	if (ah_attr->static_rate != IB_RATE_PORT_CURRENT &&
-	    ib_rate_to_mbps(ah_attr->static_rate) < 0)
-		goto bail;
-	if (ah_attr->sl >= OPA_MAX_SLS)
-		goto bail;
 	/* test the mapping for validity */
 	ibp = to_iport(ibdev, ah_attr->port_num);
 	ppd = ppd_from_ibp(ibp);
 	sc5 = ibp->sl_to_sc[ah_attr->sl];
 	dd = dd_from_ppd(ppd);
 	if (sc_to_vlt(dd, sc5) > num_vls && sc_to_vlt(dd, sc5) != 0xf)
-		goto bail;
+		return -EINVAL;
 	return 0;
-bail:
-	return -EINVAL;
-}
-
-/**
- * create_ah - create an address handle
- * @pd: the protection domain
- * @ah_attr: the attributes of the AH
- *
- * This may be called from interrupt context.
- */
-static struct ib_ah *create_ah(struct ib_pd *pd,
-			       struct ib_ah_attr *ah_attr)
-{
-	struct hfi1_ah *ah;
-	struct ib_ah *ret;
-	struct hfi1_ibdev *dev = to_idev(pd->device);
-	unsigned long flags;
-
-	if (hfi1_check_ah(pd->device, ah_attr)) {
-		ret = ERR_PTR(-EINVAL);
-		goto bail;
-	}
-
-	ah = kmalloc(sizeof(*ah), GFP_ATOMIC);
-	if (!ah) {
-		ret = ERR_PTR(-ENOMEM);
-		goto bail;
-	}
-
-	spin_lock_irqsave(&dev->n_ahs_lock, flags);
-	if (dev->n_ahs_allocated == hfi1_max_ahs) {
-		spin_unlock_irqrestore(&dev->n_ahs_lock, flags);
-		kfree(ah);
-		ret = ERR_PTR(-ENOMEM);
-		goto bail;
-	}
-
-	dev->n_ahs_allocated++;
-	spin_unlock_irqrestore(&dev->n_ahs_lock, flags);
-
-	/* ib_create_ah() will initialize ah->ibah. */
-	ah->attr = *ah_attr;
-	atomic_set(&ah->refcount, 0);
-
-	ret = &ah->ibah;
-
-bail:
-	return ret;
 }
 
 struct ib_ah *hfi1_create_qp0_ah(struct hfi1_ibport *ibp, u16 dlid)
@@ -1708,51 +1641,6 @@ struct ib_ah *hfi1_create_qp0_ah(struct hfi1_ibport *ibp, u16 dlid)
 		ah = ib_create_ah(qp0->ibqp.pd, &attr);
 	rcu_read_unlock();
 	return ah;
-}
-
-/**
- * destroy_ah - destroy an address handle
- * @ibah: the AH to destroy
- *
- * This may be called from interrupt context.
- */
-static int destroy_ah(struct ib_ah *ibah)
-{
-	struct hfi1_ibdev *dev = to_idev(ibah->device);
-	struct hfi1_ah *ah = to_iah(ibah);
-	unsigned long flags;
-
-	if (atomic_read(&ah->refcount) != 0)
-		return -EBUSY;
-
-	spin_lock_irqsave(&dev->n_ahs_lock, flags);
-	dev->n_ahs_allocated--;
-	spin_unlock_irqrestore(&dev->n_ahs_lock, flags);
-
-	kfree(ah);
-
-	return 0;
-}
-
-static int modify_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
-{
-	struct hfi1_ah *ah = to_iah(ibah);
-
-	if (hfi1_check_ah(ibah->device, ah_attr))
-		return -EINVAL;
-
-	ah->attr = *ah_attr;
-
-	return 0;
-}
-
-static int query_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
-{
-	struct hfi1_ah *ah = to_iah(ibah);
-
-	*ah_attr = ah->attr;
-
-	return 0;
 }
 
 /**
@@ -1872,7 +1760,6 @@ int hfi1_register_ib_device(struct hfi1_devdata *dd)
 
 	/* Only need to initialize non-zero fields. */
 
-	spin_lock_init(&dev->n_ahs_lock);
 	spin_lock_init(&dev->n_cqs_lock);
 	spin_lock_init(&dev->n_qps_lock);
 	spin_lock_init(&dev->n_srqs_lock);
@@ -1981,10 +1868,10 @@ int hfi1_register_ib_device(struct hfi1_devdata *dd)
 	ibdev->dealloc_ucontext = dealloc_ucontext;
 	ibdev->alloc_pd = NULL;
 	ibdev->dealloc_pd = NULL;
-	ibdev->create_ah = create_ah;
-	ibdev->destroy_ah = destroy_ah;
-	ibdev->modify_ah = modify_ah;
-	ibdev->query_ah = query_ah;
+	ibdev->create_ah = NULL;
+	ibdev->destroy_ah = NULL;
+	ibdev->modify_ah = NULL;
+	ibdev->query_ah = NULL;
 	ibdev->create_srq = hfi1_create_srq;
 	ibdev->modify_srq = hfi1_modify_srq;
 	ibdev->query_srq = hfi1_query_srq;
@@ -2026,6 +1913,7 @@ int hfi1_register_ib_device(struct hfi1_devdata *dd)
 	 * Fill in rvt info object.
 	 */
 	dd->verbs_dev.rdi.port_callback = hfi1_create_port_files;
+	dd->verbs_dev.rdi.check_ah = hfi1_check_ah;
 	dd->verbs_dev.rdi.dparms.props.max_pd = hfi1_max_pds;
 
 	ret = rvt_register_device(&dd->verbs_dev.rdi);

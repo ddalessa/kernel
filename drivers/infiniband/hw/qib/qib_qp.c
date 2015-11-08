@@ -595,14 +595,14 @@ int qib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 	if (attr_mask & IB_QP_AV) {
 		if (attr->ah_attr.dlid >= RVT_MULTICAST_LID_BASE)
 			goto inval;
-		if (qib_check_ah(qp->ibqp.device, &attr->ah_attr))
+		if (rvt_check_ah(qp->ibqp.device, &attr->ah_attr))
 			goto inval;
 	}
 
 	if (attr_mask & IB_QP_ALT_PATH) {
 		if (attr->alt_ah_attr.dlid >= RVT_MULTICAST_LID_BASE)
 			goto inval;
-		if (qib_check_ah(qp->ibqp.device, &attr->alt_ah_attr))
+		if (rvt_check_ah(qp->ibqp.device, &attr->alt_ah_attr))
 			goto inval;
 		if (attr->alt_pkey_index >= qib_get_npkeys(dd_from_dev(dev)))
 			goto inval;

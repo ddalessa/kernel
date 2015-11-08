@@ -222,13 +222,6 @@ struct qib_mcast {
 	int n_attached;
 };
 
-/* Address Handle */
-struct qib_ah {
-	struct ib_ah ibah;
-	struct ib_ah_attr attr;
-	atomic_t refcount;
-};
-
 /*
  * This structure is used to contain the head pointer, tail pointer,
  * and completion queue entries as a single memory allocation so
@@ -426,8 +419,8 @@ struct qib_ibport {
 	struct rvt_qp __rcu *qp0;
 	struct rvt_qp __rcu *qp1;
 	struct ib_mad_agent *send_agent;	/* agent for SMI (traps) */
-	struct qib_ah *sm_ah;
-	struct qib_ah *smi_ah;
+	struct rvt_ah *sm_ah;
+	struct rvt_ah *smi_ah;
 	struct rb_root mcast_tree;
 	spinlock_t lock;		/* protect changes in this struct */
 
@@ -520,10 +513,6 @@ struct qib_ibdev {
 	u32 n_piowait;
 	u32 n_txwait;
 
-	u32 n_pds_allocated;    /* number of PDs allocated for device */
-	spinlock_t n_pds_lock;
-	u32 n_ahs_allocated;    /* number of AHs allocated for device */
-	spinlock_t n_ahs_lock;
 	u32 n_cqs_allocated;    /* number of CQs allocated for device */
 	spinlock_t n_cqs_lock;
 	u32 n_qps_allocated;    /* number of QPs allocated for device */
@@ -557,11 +546,6 @@ struct qib_verbs_counters {
 static inline struct qib_mr *to_imr(struct ib_mr *ibmr)
 {
 	return container_of(ibmr, struct qib_mr, ibmr);
-}
-
-static inline struct qib_ah *to_iah(struct ib_ah *ibah)
-{
-	return container_of(ibah, struct qib_ah, ibah);
 }
 
 static inline struct qib_cq *to_icq(struct ib_cq *ibcq)
