@@ -626,7 +626,7 @@ void qib_ib_rcv(struct qib_ctxtdata *rcd, void *rhdr, void *data, u32 tlen)
 
 	/* Check for a valid destination LID (see ch. 7.11.1). */
 	lid = be16_to_cpu(hdr->lrh[1]);
-	if (lid < QIB_MULTICAST_LID_BASE) {
+	if (lid < RVT_MULTICAST_LID_BASE) {
 		lid &= ~((1 << ppd->lmc) - 1);
 		if (unlikely(lid != ppd->lid))
 			goto drop;
@@ -1755,8 +1755,8 @@ static int qib_query_gid(struct ib_device *ibdev, u8 port,
 int qib_check_ah(struct ib_device *ibdev, struct ib_ah_attr *ah_attr)
 {
 	/* A multicast address requires a GRH (see ch. 8.4.1). */
-	if (ah_attr->dlid >= QIB_MULTICAST_LID_BASE &&
-	    ah_attr->dlid != QIB_PERMISSIVE_LID &&
+	if (ah_attr->dlid >= RVT_MULTICAST_LID_BASE &&
+	    ah_attr->dlid != RVT_PERMISSIVE_LID &&
 	    !(ah_attr->ah_flags & IB_AH_GRH))
 		goto bail;
 	if ((ah_attr->ah_flags & IB_AH_GRH) &&

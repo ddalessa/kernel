@@ -243,7 +243,7 @@ static void ud_loopback(struct rvt_qp *sqp, struct rvt_swqe *swqe)
 	wc.slid = ppd->lid | (ah_attr->src_path_bits & ((1 << ppd->lmc) - 1));
 	/* Check for loopback when the port lid is not set */
 	if (wc.slid == 0 && sqp->ibqp.qp_type == IB_QPT_GSI)
-		wc.slid = HFI1_PERMISSIVE_LID;
+		wc.slid = RVT_PERMISSIVE_LID;
 	wc.sl = ah_attr->sl;
 	wc.dlid_path_bits = ah_attr->dlid & ((1 << ppd->lmc) - 1);
 	wc.port_num = qp->port_num;
@@ -311,11 +311,11 @@ int hfi1_make_ud_req(struct rvt_qp *qp)
 	ibp = to_iport(qp->ibqp.device, qp->port_num);
 	ppd = ppd_from_ibp(ibp);
 	ah_attr = &to_iah(wqe->wr.wr.ud.ah)->attr;
-	if (ah_attr->dlid < HFI1_MULTICAST_LID_BASE ||
-	    ah_attr->dlid == HFI1_PERMISSIVE_LID) {
+	if (ah_attr->dlid < RVT_MULTICAST_LID_BASE ||
+	    ah_attr->dlid == RVT_PERMISSIVE_LID) {
 		lid = ah_attr->dlid & ~((1 << ppd->lmc) - 1);
 		if (unlikely(!loopback && (lid == ppd->lid ||
-		    (lid == HFI1_PERMISSIVE_LID &&
+		    (lid == RVT_PERMISSIVE_LID &&
 		     qp->ibqp.qp_type == IB_QPT_GSI)))) {
 			/*
 			 * If DMAs are in progress, we can't generate
@@ -666,8 +666,8 @@ void hfi1_ud_rcv(struct hfi1_packet *packet)
 	qkey = be32_to_cpu(ohdr->u.ud.deth[0]);
 	src_qp = be32_to_cpu(ohdr->u.ud.deth[1]) & HFI1_QPN_MASK;
 	dlid = be16_to_cpu(hdr->lrh[1]);
-	is_mcast = (dlid > HFI1_MULTICAST_LID_BASE) &&
-			(dlid != HFI1_PERMISSIVE_LID);
+	is_mcast = (dlid > RVT_MULTICAST_LID_BASE) &&
+			(dlid != RVT_PERMISSIVE_LID);
 	bth1 = be32_to_cpu(ohdr->bth[1]);
 	if (unlikely(bth1 & HFI1_BECN_SMASK)) {
 		/*
@@ -872,7 +872,7 @@ void hfi1_ud_rcv(struct hfi1_packet *packet)
 	/*
 	 * Save the LMC lower bits if the destination LID is a unicast LID.
 	 */
-	wc.dlid_path_bits = dlid >= HFI1_MULTICAST_LID_BASE ? 0 :
+	wc.dlid_path_bits = dlid >= RVT_MULTICAST_LID_BASE ? 0 :
 		dlid & ((1 << ppd_from_ibp(ibp)->lmc) - 1);
 	wc.port_num = qp->port_num;
 	/* Signal completion event if the solicited bit is set. */

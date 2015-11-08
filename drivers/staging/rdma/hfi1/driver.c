@@ -300,7 +300,7 @@ static void rcv_hdrerr(struct hfi1_ctxtdata *rcd, struct hfi1_pportdata *ppd,
 
 		/* Get the destination QP number. */
 		qp_num = be32_to_cpu(ohdr->bth[1]) & HFI1_QPN_MASK;
-		if (lid < HFI1_MULTICAST_LID_BASE) {
+		if (lid < RVT_MULTICAST_LID_BASE) {
 			struct rvt_qp *qp;
 
 			rcu_read_lock();

@@ -279,8 +279,8 @@ int qib_make_ud_req(struct rvt_qp *qp)
 	ibp = to_iport(qp->ibqp.device, qp->port_num);
 	ppd = ppd_from_ibp(ibp);
 	ah_attr = &to_iah(wqe->wr.wr.ud.ah)->attr;
-	if (ah_attr->dlid >= QIB_MULTICAST_LID_BASE) {
-		if (ah_attr->dlid != QIB_PERMISSIVE_LID)
+	if (ah_attr->dlid >= RVT_MULTICAST_LID_BASE) {
+		if (ah_attr->dlid != RVT_PERMISSIVE_LID)
 			this_cpu_inc(ibp->pmastats->n_multicast_xmit);
 		else
 			this_cpu_inc(ibp->pmastats->n_unicast_xmit);
@@ -370,8 +370,8 @@ int qib_make_ud_req(struct rvt_qp *qp)
 	/*
 	 * Use the multicast QP if the destination LID is a multicast LID.
 	 */
-	ohdr->bth[1] = ah_attr->dlid >= QIB_MULTICAST_LID_BASE &&
-		ah_attr->dlid != QIB_PERMISSIVE_LID ?
+	ohdr->bth[1] = ah_attr->dlid >= RVT_MULTICAST_LID_BASE &&
+		ah_attr->dlid != RVT_PERMISSIVE_LID ?
 		cpu_to_be32(QIB_MULTICAST_QPN) :
 		cpu_to_be32(wqe->wr.wr.ud.remote_qpn);
 	ohdr->bth[2] = cpu_to_be32(qp->s_next_psn++ & QIB_PSN_MASK);
@@ -578,7 +578,7 @@ void qib_ud_rcv(struct qib_ibport *ibp, struct qib_ib_header *hdr,
 	/*
 	 * Save the LMC lower bits if the destination LID is a unicast LID.
 	 */
-	wc.dlid_path_bits = dlid >= QIB_MULTICAST_LID_BASE ? 0 :
+	wc.dlid_path_bits = dlid >= RVT_MULTICAST_LID_BASE ? 0 :
 		dlid & ((1 << ppd_from_ibp(ibp)->lmc) - 1);
 	wc.port_num = qp->port_num;
 	/* Signal completion event if the solicited bit is set. */

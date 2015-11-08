@@ -628,8 +628,8 @@ void hfi1_ib_rcv(struct hfi1_packet *packet)
 	/* Get the destination QP number. */
 	qp_num = be32_to_cpu(packet->ohdr->bth[1]) & HFI1_QPN_MASK;
 	lid = be16_to_cpu(hdr->lrh[1]);
-	if (unlikely((lid >= HFI1_MULTICAST_LID_BASE) &&
-	    (lid != HFI1_PERMISSIVE_LID))) {
+	if (unlikely((lid >= RVT_MULTICAST_LID_BASE) &&
+		     (lid != RVT_PERMISSIVE_LID))) {
 		struct hfi1_mcast *mcast;
 		struct hfi1_mcast_qp *p;
 
@@ -1617,8 +1617,8 @@ int hfi1_check_ah(struct ib_device *ibdev, struct ib_ah_attr *ah_attr)
 	u8 sc5;
 
 	/* A multicast address requires a GRH (see ch. 8.4.1). */
-	if (ah_attr->dlid >= HFI1_MULTICAST_LID_BASE &&
-	    ah_attr->dlid != HFI1_PERMISSIVE_LID &&
+	if (ah_attr->dlid >= RVT_MULTICAST_LID_BASE &&
+	    ah_attr->dlid != RVT_PERMISSIVE_LID &&
 	    !(ah_attr->ah_flags & IB_AH_GRH))
 		goto bail;
 	if ((ah_attr->ah_flags & IB_AH_GRH) &&

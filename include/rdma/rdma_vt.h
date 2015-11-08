@@ -58,6 +58,9 @@
 
 #include "ib_verbs.h"
 
+#define RVT_MULTICAST_LID_BASE 0xC000
+#define RVT_PERMISSIVE_LID 0xFFFF
+
 /*
  * For Memory Regions. This stuff should probably be moved into rdmavt/mr.h once
  * drivers no longer need access to the MR directly.
