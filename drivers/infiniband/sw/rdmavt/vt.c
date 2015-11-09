@@ -293,6 +293,8 @@ int rvt_register_device(struct rvt_dev_info *rdi)
 	CDR(rdi, dealloc_pd);
 	spin_lock_init(&rdi->n_pds_lock);
 	rdi->n_pds_allocated = 0;
+	spin_lock_init(&rdi->n_ahs_lock);
+	rdi->n_ahs_allocated = 0;
 
 	/* We are now good to announce we exist */
 	return ib_register_device(&rdi->ibdev, rdi->port_callback);

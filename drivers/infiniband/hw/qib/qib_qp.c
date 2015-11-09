@@ -35,6 +35,7 @@
 #include <linux/err.h>
 #include <linux/vmalloc.h>
 #include <linux/jhash.h>
+#include <rdma/rdma_vt.h>
 #ifdef CONFIG_DEBUG_FS
 #include <linux/seq_file.h>
 #endif
@@ -592,16 +593,16 @@ int qib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		goto inval;
 
 	if (attr_mask & IB_QP_AV) {
-		if (attr->ah_attr.dlid >= QIB_MULTICAST_LID_BASE)
+		if (attr->ah_attr.dlid >= RVT_MULTICAST_LID_BASE)
 			goto inval;
-		if (qib_check_ah(qp->ibqp.device, &attr->ah_attr))
+		if (rvt_check_ah(qp->ibqp.device, &attr->ah_attr))
 			goto inval;
 	}
 
 	if (attr_mask & IB_QP_ALT_PATH) {
-		if (attr->alt_ah_attr.dlid >= QIB_MULTICAST_LID_BASE)
+		if (attr->alt_ah_attr.dlid >= RVT_MULTICAST_LID_BASE)
 			goto inval;
-		if (qib_check_ah(qp->ibqp.device, &attr->alt_ah_attr))
+		if (rvt_check_ah(qp->ibqp.device, &attr->alt_ah_attr))
 			goto inval;
 		if (attr->alt_pkey_index >= qib_get_npkeys(dd_from_dev(dev)))
 			goto inval;

@@ -48,7 +48,55 @@
  *
  */
 
+#include <linux/slab.h>
 #include "ah.h"
+
+/**
+ * rvt_check_ah - validate the attributes of AH
+ * @ibdev: the ib device
+ * @ah_attr: the attributes of the AH
+ */
+int rvt_check_ah(struct ib_device *ibdev,
+		struct ib_ah_attr *ah_attr)
+{
+	int err;
+	struct ib_port_attr port_attr;
+	struct rvt_dev_info *rdi = ib_to_rvt(ibdev);
+	enum rdma_link_layer link = rdma_port_get_link_layer(ibdev,
+							     ah_attr->port_num);
+
+	err = ib_query_port(ibdev, ah_attr->port_num, &port_attr);
+	if (err)
+		goto bail;
+
+	if (ah_attr->port_num < 1 ||
+			ah_attr->port_num > ibdev->phys_port_cnt)
+		goto bail;
+	if (ah_attr->static_rate != IB_RATE_PORT_CURRENT &&
+			ib_rate_to_mult(ah_attr->static_rate) < 0)
+		goto bail;
+	if ((ah_attr->ah_flags & IB_AH_GRH) &&
+	    ah_attr->grh.sgid_index >= port_attr.gid_tbl_len)
+		goto bail;
+
+	if (link == IB_LINK_LAYER_INFINIBAND) {
+		if (ah_attr->dlid == 0)
+			goto bail;
+		if (ah_attr->dlid >= RVT_MULTICAST_LID_BASE &&
+		    ah_attr->dlid != RVT_PERMISSIVE_LID &&
+		    !(ah_attr->ah_flags & IB_AH_GRH))
+			goto bail;
+	}
+
+	if (rdi->check_ah)
+		if (rdi->check_ah(ibdev, ah_attr))
+			goto bail;
+
+	return 0;
+bail:
+	return -EINVAL;
+}
+EXPORT_SYMBOL(rvt_check_ah);
 
 /**
  * rvt_create_ah - create an address handle
@@ -60,25 +108,77 @@
 struct ib_ah *rvt_create_ah(struct ib_pd *pd,
 			    struct ib_ah_attr *ah_attr)
 {
-	/*
-	 * VT-DRIVER-API: qp_mtu()
-	 * See description in rvt_create_qp()
-	 */
+	struct rvt_ah *ah;
+	struct ib_ah *ret;
+	struct rvt_dev_info *dev = ib_to_rvt(pd->device);
+	unsigned long flags;
 
-	return ERR_PTR(-EINVAL);
+	if (rvt_check_ah(pd->device, ah_attr)) {
+		ret = ERR_PTR(-EINVAL);
+		goto bail;
+	}
+
+	ah = kmalloc(sizeof(*ah), GFP_ATOMIC);
+	if (!ah) {
+		ret = ERR_PTR(-ENOMEM);
+		goto bail;
+	}
+
+	spin_lock_irqsave(&dev->n_ahs_lock, flags);
+	if (dev->n_ahs_allocated == dev->dparms.props.max_ah) {
+		spin_unlock(&dev->n_ahs_lock);
+		kfree(ah);
+		ret = ERR_PTR(-ENOMEM);
+		goto bail;
+	}
+
+	dev->n_ahs_allocated++;
+	spin_unlock_irqrestore(&dev->n_ahs_lock, flags);
+
+	ah->attr = *ah_attr;
+	atomic_set(&ah->refcount, 0);
+
+	ret = &ah->ibah;
+
+bail:
+	return ret;
 }
 
 int rvt_destroy_ah(struct ib_ah *ibah)
 {
-	return -EINVAL;
+	struct rvt_dev_info *dev = ib_to_rvt(ibah->device);
+	struct rvt_ah *ah = to_iah(ibah);
+	unsigned long flags;
+
+	if (atomic_read(&ah->refcount) != 0)
+		return -EBUSY;
+
+	spin_lock_irqsave(&dev->n_ahs_lock, flags);
+	dev->n_ahs_allocated--;
+	spin_unlock_irqrestore(&dev->n_ahs_lock, flags);
+
+	kfree(ah);
+
+	return 0;
 }
 
 int rvt_modify_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
 {
-	return -EINVAL;
+	struct rvt_ah *ah = to_iah(ibah);
+
+	if (rvt_check_ah(ibah->device, ah_attr))
+		return -EINVAL;
+
+	ah->attr = *ah_attr;
+
+	return 0;
 }
 
 int rvt_query_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
 {
-	return -EINVAL;
+	struct rvt_ah *ah = to_iah(ibah);
+
+	*ah_attr = ah->attr;
+
+	return 0;
 }
