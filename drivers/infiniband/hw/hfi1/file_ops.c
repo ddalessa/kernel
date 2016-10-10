@@ -183,6 +183,7 @@ static int hfi1_file_open(struct inode *inode, struct file *fp)
 		fd->rec_cpu_num = -1; /* no cpu affinity by default */
 		fd->mm = current->mm;
 		atomic_inc(&fd->mm->mm_count);
+		atomic_inc(&dd->user_refcount);
 	}
 
 	fp->private_data = fd;
@@ -798,6 +799,10 @@ static int hfi1_file_close(struct inode *inode, struct file *fp)
 done:
 	mmdrop(fdata->mm);
 	kobject_put(&dd->kobj);
+
+	if (atomic_dec_and_test(&dd->user_refcount))
+		complete(&dd->user_comp);
+
 	kfree(fdata);
 	return 0;
 }

@@ -1538,12 +1538,29 @@ bail:
 	return ret;
 }
 
+static void wait_for_clients(struct hfi1_devdata *dd)
+{
+	/*
+	 * Remove the device init value and wait for active
+	 * users to finish if there are any.
+	 */
+	if (atomic_sub_return(1, &dd->user_refcount))
+		wait_for_completion(&dd->user_comp);
+}
+
 static void remove_one(struct pci_dev *pdev)
 {
 	struct hfi1_devdata *dd = pci_get_drvdata(pdev);
 
 	/* close debugfs files before ib unregister */
 	hfi1_dbg_ibdev_exit(&dd->verbs_dev);
+
+	/* remove the /dev hfi1 interface */
+	hfi1_device_remove(dd);
+
+	/* wait for existing user space clients to finish */
+	wait_for_clients(dd);
+
 	/* unregister from IB core */
 	hfi1_unregister_ib_device(dd);
 
@@ -1557,8 +1574,6 @@ static void remove_one(struct pci_dev *pdev)
 
 	/* wait until all of our (qsfp) queue_work() calls complete */
 	flush_workqueue(ib_wq);
-
-	hfi1_device_remove(dd);
 
 	postinit_cleanup(dd);
 }
