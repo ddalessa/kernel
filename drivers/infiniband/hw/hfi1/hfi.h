@@ -1162,7 +1162,6 @@ struct hfi1_devdata {
 	atomic_t aspm_disabled_cnt;
 	/* Keeps track of user space clients */
 	atomic_t user_refcount;
-	struct hfi1_affinity *affinity;
 	/* Used to wait for outstanding user space clients before dev removal */
 	struct completion user_comp;
 	bool eprom_available;	/* true if EPROM is available for this device */
