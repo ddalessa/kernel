@@ -142,6 +142,7 @@ struct rvt_driver_params {
 	 * For instance special module parameters. Goes here.
 	 */
 	unsigned int lkey_table_size;
+	unsigned int no_user_mr_percpu;
 	unsigned int qp_table_size;
 	int qpn_start;
 	int qpn_inc;

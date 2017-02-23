@@ -56,6 +56,12 @@ module_param_named(lkey_table_size, qib_lkey_table_size, uint,
 MODULE_PARM_DESC(lkey_table_size,
 		 "LKEY table size in bits (2^n, 1 <= n <= 23)");
 
+static unsigned int qib_no_user_mr_percpu;
+module_param_named(no_user_mr_percpu, qib_no_user_mr_percpu, uint,
+		   S_IRUGO);
+MODULE_PARM_DESC(no_user_mr_percpu,
+		 "Avoid percpu refcount for user MRs (default 0)");
+
 static unsigned int ib_qib_max_pds = 0xFFFF;
 module_param_named(max_pds, ib_qib_max_pds, uint, S_IRUGO);
 MODULE_PARM_DESC(max_pds,
@@ -1606,6 +1612,7 @@ int qib_register_ib_device(struct qib_devdata *dd)
 	dd->verbs_dev.rdi.dparms.max_rdma_atomic = QIB_MAX_RDMA_ATOMIC;
 	dd->verbs_dev.rdi.driver_f.get_guid_be = qib_get_guid_be;
 	dd->verbs_dev.rdi.dparms.lkey_table_size = qib_lkey_table_size;
+	dd->verbs_dev.rdi.dparms.no_user_mr_percpu = qib_no_user_mr_percpu;
 	dd->verbs_dev.rdi.dparms.qp_table_size = ib_qib_qp_table_size;
 	dd->verbs_dev.rdi.dparms.qpn_start = 1;
 	dd->verbs_dev.rdi.dparms.qpn_res_start = QIB_KD_QP;

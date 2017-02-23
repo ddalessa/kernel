@@ -68,6 +68,12 @@ module_param_named(lkey_table_size, hfi1_lkey_table_size, uint,
 MODULE_PARM_DESC(lkey_table_size,
 		 "LKEY table size in bits (2^n, 1 <= n <= 23)");
 
+static unsigned int hfi1_no_user_mr_percpu;
+module_param_named(no_user_mr_percpu, hfi1_no_user_mr_percpu, uint,
+		   S_IRUGO);
+MODULE_PARM_DESC(no_user_mr_percpu,
+		 "Avoid percpu refcount for user MRs (default 0)");
+
 static unsigned int hfi1_max_pds = 0xFFFF;
 module_param_named(max_pds, hfi1_max_pds, uint, S_IRUGO);
 MODULE_PARM_DESC(max_pds,
@@ -1841,6 +1847,7 @@ int hfi1_register_ib_device(struct hfi1_devdata *dd)
 	/* misc settings */
 	dd->verbs_dev.rdi.flags = 0; /* Let rdmavt handle it all */
 	dd->verbs_dev.rdi.dparms.lkey_table_size = hfi1_lkey_table_size;
+	dd->verbs_dev.rdi.dparms.no_user_mr_percpu = hfi1_no_user_mr_percpu;
 	dd->verbs_dev.rdi.dparms.nports = dd->num_pports;
 	dd->verbs_dev.rdi.dparms.npkeys = hfi1_get_npkeys(dd);
 
