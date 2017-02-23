@@ -280,6 +280,7 @@ static struct rvt_mr *__rvt_alloc_mr(int count, struct ib_pd *pd)
 	struct rvt_mr *mr;
 	int rval = -ENOMEM;
 	int m;
+	struct rvt_dev_info *dev = ib_to_rvt(pd->device);
 
 	/* Allocate struct plus pointers to first level page tables. */
 	m = (count + RVT_SEGSZ - 1) / RVT_SEGSZ;
@@ -287,7 +288,10 @@ static struct rvt_mr *__rvt_alloc_mr(int count, struct ib_pd *pd)
 	if (!mr)
 		goto bail;
 
-	rval = rvt_init_mregion(&mr->mr, pd, count, 0);
+	rval = rvt_init_mregion(&mr->mr, pd, count,
+				ibpd_to_rvtpd(pd)->user &&
+				dev->dparms.no_user_mr_percpu ?
+					PERCPU_REF_INIT_ATOMIC : 0);
 	if (rval)
 		goto bail;
 	/*
