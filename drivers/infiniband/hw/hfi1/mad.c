@@ -702,6 +702,11 @@ static int __subn_get_opa_portinfo(struct opa_smp *smp, u32 am, u8 *data,
 	pi->buffer_units = cpu_to_be32(buffer_units);
 
 	pi->opa_cap_mask = cpu_to_be16(OPA_CAP_MASK3_IsSharedSpaceSupported);
+	/* Driver does not support mcast/collective configuration */
+	pi->opa_cap_mask &=
+		cpu_to_be16(~OPA_CAP_MASK3_IsAddrRangeConfigSupported);
+	pi->collectivemask_multicastmask = ((HFI1_COLLECTIVE_NR & 0x7)
+					    << 3 | (HFI1_MCAST_NR & 0x7));
 
 	/* HFI supports a replay buffer 128 LTPs in size */
 	pi->replay_depth.buffer = 0x80;
