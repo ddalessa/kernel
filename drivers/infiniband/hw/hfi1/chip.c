@@ -8484,7 +8484,8 @@ static int do_8051_command(
 	 * Alternative to holding the lock for a long time:
 	 * - keep busy wait - have other users bounce off
 	 */
-	spin_lock_irqsave(&dd->dc8051_lock, flags);
+	if (!spin_trylock_irqsave(&dd->dc8051_lock, flags))
+		return -EBUSY;
 
 	/* We can't send any commands to the 8051 if it's in reset */
 	if (dd->dc_shutdown) {
