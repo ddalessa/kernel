@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015, 2016 Intel Corporation.
+ * Copyright(c) 2015-2017 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -78,37 +78,32 @@ static inline void init_cpu_mask_set(struct cpu_mask_set *set)
 }
 
 /* Initialize non-HT cpu cores mask */
-void init_real_cpu_mask(void)
+static int init_real_cpu_mask(void)
 {
-	int possible, curr_cpu, i, ht;
+	int curr_cpu, ret;
+	cpumask_var_t sibling_mask;
+	struct cpumask *real_cpu_mask = &node_affinity.real_cpu_mask;
 
-	cpumask_clear(&node_affinity.real_cpu_mask);
+	ret = zalloc_cpumask_var(&sibling_mask, GFP_KERNEL);
+	if (!ret)
+		return -ENOMEM;
+
+	cpumask_clear(real_cpu_mask);
 
 	/* Start with cpu online mask as the real cpu mask */
-	cpumask_copy(&node_affinity.real_cpu_mask, cpu_online_mask);
+	cpumask_copy(real_cpu_mask, cpu_online_mask);
 
-	/*
-	 * Remove HT cores from the real cpu mask.  Do this in two steps below.
-	 */
-	possible = cpumask_weight(&node_affinity.real_cpu_mask);
-	ht = cpumask_weight(topology_sibling_cpumask(
-				cpumask_first(&node_affinity.real_cpu_mask)));
-	/*
-	 * Step 1.  Skip over the first N HT siblings and use them as the
-	 * "real" cores.  Assumes that HT cores are not enumerated in
-	 * succession (except in the single core case).
-	 */
-	curr_cpu = cpumask_first(&node_affinity.real_cpu_mask);
-	for (i = 0; i < possible / ht; i++)
-		curr_cpu = cpumask_next(curr_cpu, &node_affinity.real_cpu_mask);
-	/*
-	 * Step 2.  Remove the remaining HT siblings.  Use cpumask_next() to
-	 * skip any gaps.
-	 */
-	for (; i < possible; i++) {
-		cpumask_clear_cpu(curr_cpu, &node_affinity.real_cpu_mask);
-		curr_cpu = cpumask_next(curr_cpu, &node_affinity.real_cpu_mask);
+	/* Remove HT cores from the real cpu mask */
+	curr_cpu = cpumask_first(real_cpu_mask);
+	while (curr_cpu < nr_cpu_ids) {
+		cpumask_copy(sibling_mask, topology_sibling_cpumask(curr_cpu));
+		cpumask_clear_cpu(curr_cpu, sibling_mask);
+		cpumask_andnot(real_cpu_mask, real_cpu_mask, sibling_mask);
+		curr_cpu = cpumask_next(curr_cpu, real_cpu_mask);
 	}
+
+	free_cpumask_var(sibling_mask);
+	return 0;
 }
 
 int node_affinity_init(void)
@@ -134,7 +129,8 @@ int node_affinity_init(void)
 	 * initialized early. It is needed to calculate the number of user
 	 * contexts in set_up_context_variables().
 	 */
-	init_real_cpu_mask();
+	if (init_real_cpu_mask())
+		return -ENOMEM;
 
 	hfi1_per_node_cntr = kcalloc(node_affinity.num_possible_nodes,
 				     sizeof(*hfi1_per_node_cntr), GFP_KERNEL);

@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015, 2016 Intel Corporation.
+ * Copyright(c) 2015-2017 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -72,8 +72,6 @@ struct cpu_mask_set {
 
 struct hfi1_msix_entry;
 
-/* Initialize non-HT cpu cores mask */
-void init_real_cpu_mask(void);
 /* Initialize driver affinity data */
 int hfi1_dev_affinity_init(struct hfi1_devdata *);
 /*
