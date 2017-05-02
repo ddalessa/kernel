@@ -82,7 +82,7 @@ static int assign_ctxt(struct hfi1_filedata *fd, struct hfi1_user_info *uinfo);
 static int init_subctxts(struct hfi1_ctxtdata *uctxt,
 			 const struct hfi1_user_info *uinfo);
 static int init_user_ctxt(struct hfi1_filedata *fd);
-static int user_init(struct hfi1_ctxtdata *uctxt);
+static void user_init(struct hfi1_ctxtdata *uctxt);
 static int get_ctxt_info(struct hfi1_filedata *fd, void __user *ubase,
 			 __u32 len);
 static int get_base_info(struct hfi1_filedata *fd, void __user *ubase,
@@ -847,7 +847,7 @@ static u64 kvirt_to_phys(void *addr)
 
 static int assign_ctxt(struct hfi1_filedata *fd, struct hfi1_user_info *uinfo)
 {
-	int ret = 0;
+	int ret;
 	unsigned int swmajor, swminor;
 
 	swmajor = uinfo->userversion >> 16;
@@ -857,14 +857,16 @@ static int assign_ctxt(struct hfi1_filedata *fd, struct hfi1_user_info *uinfo)
 	swminor = uinfo->userversion & 0xffff;
 
 	mutex_lock(&hfi1_mutex);
-	/* First, lets check if we need to get a sub context? */
+	/*
+	 * Get a sub context if necessary.
+	 * ret < 0 error, 0 no context, 1 sub-context found
+	 */
+	ret = 0;
 	if (uinfo->subctxt_cnt) {
-		/* < 0 error, 0 no context, 1 sub-context found */
 		ret = find_sub_ctxt(fd, uinfo);
-		if (ret > 0) {
+		if (ret > 0)
 			fd->rec_cpu_num =
 				hfi1_get_proc_affinity(fd->uctxt->numa_id);
-		}
 	}
 
 	/*
@@ -885,17 +887,27 @@ static int assign_ctxt(struct hfi1_filedata *fd, struct hfi1_user_info *uinfo)
 		ret = wait_event_interruptible(fd->uctxt->wait, !test_bit(
 					       HFI1_CTXT_BASE_UNINIT,
 					       &fd->uctxt->event_flags));
+		if (test_bit(HFI1_CTXT_BASE_FAILED, &fd->uctxt->event_flags)) {
+			clear_bit(fd->subctxt, fd->uctxt->in_use_ctxts);
+			return -ENOMEM;
+		}
 		/* The only thing a sub context needs is the user_xxx stuff */
 		if (!ret)
-			init_user_ctxt(fd);
+			ret = init_user_ctxt(fd);
+
+		if (ret)
+			clear_bit(fd->subctxt, fd->uctxt->in_use_ctxts);
 	} else if (!ret) {
 		ret = setup_base_ctxt(fd);
-
-		/*
-		 * Base context is done, notify anybody using a sub-context
-		 * that is waiting for this completion
-		 */
-		if (!ret && fd->uctxt->subctxt_cnt) {
+		if (fd->uctxt->subctxt_cnt) {
+			/* If there is an error, set the failed bit. */
+			if (ret)
+				set_bit(HFI1_CTXT_BASE_FAILED,
+					&fd->uctxt->event_flags);
+			/*
+			 * Base context is done, notify anybody using a
+			 * sub-context that is waiting for this completion
+			 */
 			clear_bit(HFI1_CTXT_BASE_UNINIT,
 				  &fd->uctxt->event_flags);
 			wake_up(&fd->uctxt->wait);
@@ -916,13 +928,17 @@ static int find_sub_ctxt(struct hfi1_filedata *fd,
 	struct hfi1_devdata *dd = fd->dd;
 	u16 subctxt;
 
-	for (i = dd->first_user_ctxt; i < dd->num_rcv_contexts; i++) {
+	for (i = dd->first_dyn_alloc_ctxt; i < dd->num_rcv_contexts; i++) {
 		struct hfi1_ctxtdata *uctxt = dd->rcd[i];
 
 		/* Skip ctxts which are not yet open */
 		if (!uctxt ||
 		    bitmap_empty(uctxt->in_use_ctxts,
 				 HFI1_MAX_SHARED_CTXTS))
+			continue;
+
+		/* Skip dynamically allocated kernel contexts */
+		if (uctxt->sc && (uctxt->sc->type == SC_KERNEL))
 			continue;
 
 		/* Skip ctxt if it doesn't match the requested one */
@@ -932,55 +948,17 @@ static int find_sub_ctxt(struct hfi1_filedata *fd,
 		    uctxt->subctxt_id != uinfo->subctxt_id ||
 		    uctxt->subctxt_cnt != uinfo->subctxt_cnt)
 			continue;
-<<<<<<< HEAD
-		for (i = dd->first_dyn_alloc_ctxt;
-		     i < dd->num_rcv_contexts; i++) {
-			struct hfi1_ctxtdata *uctxt = dd->rcd[i];
-
-			/* Skip ctxts which are not yet open */
-			if (!uctxt || !uctxt->cnt)
-				continue;
-
-			/* Skip dynamically allocted kernel contexts */
-			if (uctxt->sc && (uctxt->sc->type == SC_KERNEL))
-				continue;
-
-			/* Skip ctxt if it doesn't match the requested one */
-			if (memcmp(uctxt->uuid, uinfo->uuid,
-				   sizeof(uctxt->uuid)) ||
-			    uctxt->jkey != generate_jkey(current_uid()) ||
-			    uctxt->subctxt_id != uinfo->subctxt_id ||
-			    uctxt->subctxt_cnt != uinfo->subctxt_cnt)
-				continue;
-
-			/* Verify the sharing process matches the master */
-			if (uctxt->userversion != uinfo->userversion ||
-			    uctxt->cnt >= uctxt->subctxt_cnt) {
-				ret = -EINVAL;
-				goto done;
-			}
-			fd->uctxt = uctxt;
-			fd->subctxt  = uctxt->cnt++;
-			uctxt->active_slaves |= 1 << fd->subctxt;
-			ret = 1;
-			goto done;
-=======
 
 		/* Verify the sharing process matches the master */
 		if (uctxt->userversion != uinfo->userversion)
 			return -EINVAL;
-<<<<<<< HEAD
->>>>>>> f1f8a68... IB/hfi1: Search shared contexts on the opened device, not all devices
-		}
-=======
 
 		/* Find an unused context */
 		subctxt = find_first_zero_bit(uctxt->in_use_ctxts,
 					      HFI1_MAX_SHARED_CTXTS);
 		if (subctxt >= uctxt->subctxt_cnt)
-			return -EINVAL;
+			return -EBUSY;
 
->>>>>>> d409d3d... IB/hfi1: Fix an assign/ordering issue with shared context IDs
 		fd->uctxt = uctxt;
 		fd->subctxt = subctxt;
 		__set_bit(fd->subctxt, uctxt->in_use_ctxts);
@@ -1009,10 +987,6 @@ static int allocate_ctxt(struct hfi1_filedata *fd, struct hfi1_devdata *dd,
 		return -EIO;
 	}
 
-<<<<<<< HEAD
-	for (ctxt = dd->first_dyn_alloc_ctxt;
-	     ctxt < dd->num_rcv_contexts; ctxt++)
-=======
 	/*
 	 * This check is sort of redundant to the next EBUSY error. It would
 	 * also indicate an inconsistancy in the driver if this value was
@@ -1021,8 +995,8 @@ static int allocate_ctxt(struct hfi1_filedata *fd, struct hfi1_devdata *dd,
 	if (!dd->freectxts)
 		return -EBUSY;
 
-	for (ctxt = dd->first_user_ctxt; ctxt < dd->num_rcv_contexts; ctxt++)
->>>>>>> f1f8a68... IB/hfi1: Search shared contexts on the opened device, not all devices
+	for (ctxt = dd->first_dyn_alloc_ctxt;
+	     ctxt < dd->num_rcv_contexts; ctxt++)
 		if (!dd->rcd[ctxt])
 			break;
 
@@ -1156,7 +1130,7 @@ bail_ureg:
 	return ret;
 }
 
-static int user_init(struct hfi1_ctxtdata *uctxt)
+static void user_init(struct hfi1_ctxtdata *uctxt)
 {
 	unsigned int rcvctrl_ops = 0;
 
@@ -1206,8 +1180,6 @@ static int user_init(struct hfi1_ctxtdata *uctxt)
 	else
 		rcvctrl_ops |= HFI1_RCVCTRL_TAILUPD_DIS;
 	hfi1_rcvctrl(uctxt->dd, rcvctrl_ops, uctxt->ctxt);
-
-	return 0;
 }
 
 static int get_ctxt_info(struct hfi1_filedata *fd, void __user *ubase,
@@ -1276,28 +1248,32 @@ static int setup_base_ctxt(struct hfi1_filedata *fd)
 	/* Now allocate the RcvHdr queue and eager buffers. */
 	ret = hfi1_create_rcvhdrq(dd, uctxt);
 	if (ret)
-		goto done;
+		return ret;
 
 	ret = hfi1_setup_eagerbufs(uctxt);
 	if (ret)
-		goto done;
+		goto setup_failed;
 
 	/* If sub-contexts are enabled, do the appropriate setup */
 	if (uctxt->subctxt_cnt)
 		ret = setup_subctxt(uctxt);
 	if (ret)
-		goto done;
+		goto setup_failed;
 
 	ret = hfi1_user_exp_rcv_grp_init(fd);
 	if (ret)
-		goto done;
+		goto setup_failed;
 
 	ret = init_user_ctxt(fd);
 	if (ret)
-		goto done;
+		goto setup_failed;
 
-	ret = user_init(uctxt);
-done:
+	user_init(uctxt);
+
+	return 0;
+
+setup_failed:
+	hfi1_free_ctxtdata(dd, uctxt);
 	return ret;
 }
 
