@@ -838,9 +838,9 @@ bail:
 	return last;
 }
 
-static inline void set_nodma_rtail(struct hfi1_devdata *dd, u8 ctxt)
+static inline void set_nodma_rtail(struct hfi1_devdata *dd, u16 ctxt)
 {
-	int i;
+	u16 i;
 
 	/*
 	 * For dynamically allocated kernel contexts (like vnic) switch
@@ -858,9 +858,9 @@ static inline void set_nodma_rtail(struct hfi1_devdata *dd, u8 ctxt)
 			&handle_receive_interrupt_nodma_rtail;
 }
 
-static inline void set_dma_rtail(struct hfi1_devdata *dd, u8 ctxt)
+static inline void set_dma_rtail(struct hfi1_devdata *dd, u16 ctxt)
 {
-	int i;
+	u16 i;
 
 	/*
 	 * For dynamically allocated kernel contexts (like vnic) switch
@@ -880,7 +880,7 @@ static inline void set_dma_rtail(struct hfi1_devdata *dd, u8 ctxt)
 
 void set_all_slowpath(struct hfi1_devdata *dd)
 {
-	int i;
+	u16 i;
 
 	/* HFI1_CTRL_CTXT must always use the slow path interrupt handler */
 	for (i = HFI1_CTRL_CTXT + 1; i < dd->num_rcv_contexts; i++) {
@@ -1069,7 +1069,7 @@ void receive_interrupt_work(struct work_struct *work)
 	struct hfi1_pportdata *ppd = container_of(work, struct hfi1_pportdata,
 						  linkstate_active_work);
 	struct hfi1_devdata *dd = ppd->dd;
-	int i;
+	u16 i;
 
 	/* Received non-SC15 packet implies neighbor_normal */
 	ppd->neighbor_normal = 1;
@@ -1270,7 +1270,8 @@ void hfi1_start_led_override(struct hfi1_pportdata *ppd, unsigned int timeon,
  */
 int hfi1_reset_device(int unit)
 {
-	int ret, i;
+	int ret;
+	u16 i;
 	struct hfi1_devdata *dd = hfi1_lookup(unit);
 	struct hfi1_pportdata *ppd;
 	unsigned long flags;
