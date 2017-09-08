@@ -219,8 +219,9 @@ struct opa_vnic_adapter {
 
 	u8 flow_tbl[OPA_VNIC_FLOW_TBL_SIZE];
 
-	unsigned long trap_timeout;
-	u8            trap_count;
+	unsigned long  trap_timeout;
+	u8             trap_count;
+	struct dentry *dentry;
 };
 
 /* Same as opa_veswport_mactable_entry, but without bitwise attribute */
@@ -326,5 +327,6 @@ void opa_vnic_vema_report_event(struct opa_vnic_adapter *adapter, u8 event);
 void opa_vnic_set_ethtool_ops(struct net_device *netdev);
 void opa_vnic_vema_send_trap(struct opa_vnic_adapter *adapter,
 			     struct __opa_veswport_trap *data, u32 lid);
+void vema_get_pod_values(struct opa_veswport_info *port_info);
 
 #endif /* _OPA_VNIC_INTERNAL_H */
