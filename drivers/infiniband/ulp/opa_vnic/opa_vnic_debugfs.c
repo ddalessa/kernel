@@ -604,6 +604,53 @@ void opa_vnic_dbg_vport_exit(struct opa_vnic_adapter *adapter)
 	debugfs_remove_recursive(adapter->dentry);
 }
 
+static int ctrl_add_vport_set(void *data, u64 val)
+{
+	struct opa_vnic_vema_port *port = data;
+	struct opa_vnic_adapter *adapter;
+	u8 vport = (u8)val;
+
+	adapter = vema_add_vport(port, vport);
+	return IS_ERR(adapter);
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(ctrl_add_vport, NULL, ctrl_add_vport_set, "%llu\n");
+
+void opa_vnic_dbg_ctrl_init(struct opa_vnic_ctrl_port *cport)
+{
+	struct opa_vnic_vema_port *port;
+	int i;
+
+	if (!opa_vnic_dbg_root)
+		return;
+
+	for (i = 1; i <= cport->num_ports; i++) {
+		char name[255];
+
+		port = vema_get_port(cport, i);
+		if (port->dentry)
+			continue;
+		snprintf(name, sizeof(name), "%s.%02x",
+			 dev_name(&cport->ibdev->dev), i);
+		port->dentry = debugfs_create_dir(name, opa_vnic_dbg_root);
+		if (port->dentry)
+			DEBUGFS_FILE_CREATE("add_vport", port->dentry, port,
+					    &ctrl_add_vport, 0200);
+	}
+}
+
+void opa_vnic_dbg_ctrl_exit(struct opa_vnic_ctrl_port *cport)
+{
+	struct opa_vnic_vema_port *port;
+	int i;
+
+	for (i = 1; i <= cport->num_ports; i++) {
+		port = vema_get_port(cport, i);
+		debugfs_remove_recursive(port->dentry);
+		port->dentry = NULL;
+	}
+}
+
 void opa_vnic_dbg_init(void)
 {
 	opa_vnic_dbg_root = debugfs_create_dir(opa_vnic_driver_name, NULL);

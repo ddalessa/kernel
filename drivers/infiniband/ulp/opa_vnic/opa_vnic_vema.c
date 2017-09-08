@@ -91,30 +91,6 @@ const char opa_vnic_driver_version[] = DRV_VERSION;
 /* Maximum number of VNIC ports supported */
 #define OPA_VNIC_MAX_NUM_VPORT    255
 
-/**
- * struct opa_vnic_vema_port -- VNIC VEMA port details
- * @cport: pointer to port
- * @mad_agent: pointer to mad agent for port
- * @class_port_info: Class port info information.
- * @tid: Transaction id
- * @port_num: OPA port number
- * @vport_idr: vnic ports idr
- * @event_handler: ib event handler
- * @lock: adapter interface lock
- */
-struct opa_vnic_vema_port {
-	struct opa_vnic_ctrl_port      *cport;
-	struct ib_mad_agent            *mad_agent;
-	struct opa_class_port_info      class_port_info;
-	u64                             tid;
-	u8                              port_num;
-	struct idr                      vport_idr;
-	struct ib_event_handler         event_handler;
-
-	/* Lock to query/update network adapter */
-	struct mutex                    lock;
-};
-
 static void opa_vnic_vema_add_one(struct ib_device *device);
 static void opa_vnic_vema_rem_one(struct ib_device *device,
 				  void *client_data);
@@ -197,8 +173,8 @@ void vema_get_pod_values(struct opa_veswport_info *port_info)
  *
  * Return a pointer to the vnic adapter structure
  */
-static struct opa_vnic_adapter *vema_add_vport(struct opa_vnic_vema_port *port,
-					       u8 vport_num)
+struct opa_vnic_adapter *vema_add_vport(struct opa_vnic_vema_port *port,
+					u8 vport_num)
 {
 	struct opa_vnic_ctrl_port *cport = port->cport;
 	struct opa_vnic_adapter *adapter;
@@ -213,8 +189,9 @@ static struct opa_vnic_adapter *vema_add_vport(struct opa_vnic_vema_port *port,
 		if (rc < 0) {
 			opa_vnic_rem_netdev(adapter);
 			adapter = ERR_PTR(rc);
+		} else {
+			opa_vnic_dbg_vport_init(adapter);
 		}
-		opa_vnic_dbg_vport_init(adapter);
 	}
 
 	return adapter;
@@ -699,7 +676,7 @@ free_recv_mad:
  * Return: ptr to requested opa_vnic_vema_port strucure
  *         if success, NULL if not
  */
-static struct opa_vnic_vema_port *
+struct opa_vnic_vema_port *
 vema_get_port(struct opa_vnic_ctrl_port *cport, u8 port_num)
 {
 	struct opa_vnic_vema_port *port = (void *)cport + sizeof(*cport);
@@ -1025,8 +1002,10 @@ static void opa_vnic_vema_add_one(struct ib_device *device)
 
 	/* Initialize opa vnic management agent (vema) */
 	rc = vema_register(cport);
-	if (!rc)
+	if (!rc) {
+		opa_vnic_dbg_ctrl_init(cport);
 		c_info("VNIC client initialized\n");
+	}
 
 	ib_set_client_data(device, &opa_vnic_client, cport);
 	opa_vnic_ctrl_config_dev(cport, true);
@@ -1049,6 +1028,7 @@ static void opa_vnic_vema_rem_one(struct ib_device *device,
 
 	c_info("removing VNIC client\n");
 	opa_vnic_ctrl_config_dev(cport, false);
+	opa_vnic_dbg_ctrl_exit(cport);
 	vema_unregister(cport);
 	kfree(cport);
 }
