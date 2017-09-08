@@ -57,6 +57,7 @@
 #include <rdma/opa_port_info.h>
 
 #include "opa_vnic_internal.h"
+#include "opa_vnic_debugfs.h"
 
 #define DRV_VERSION "1.0"
 char opa_vnic_driver_name[] = "opa_vnic";
@@ -177,7 +178,7 @@ static inline bool vema_mac_tbl_req_ok(struct opa_veswport_mactable *mac_tbl)
  * Return the power on default values in the port info structure
  * in big endian format as required by MAD.
  */
-static inline void vema_get_pod_values(struct opa_veswport_info *port_info)
+void vema_get_pod_values(struct opa_veswport_info *port_info)
 {
 	memset(port_info, 0, sizeof(*port_info));
 	port_info->vport.max_mac_tbl_ent =
@@ -213,6 +214,7 @@ static struct opa_vnic_adapter *vema_add_vport(struct opa_vnic_vema_port *port,
 			opa_vnic_rem_netdev(adapter);
 			adapter = ERR_PTR(rc);
 		}
+		opa_vnic_dbg_vport_init(adapter);
 	}
 
 	return adapter;
@@ -857,6 +859,7 @@ static int vema_rem_vport(int id, void *p, void *data)
 {
 	struct opa_vnic_adapter *adapter = p;
 
+	opa_vnic_dbg_vport_exit(adapter);
 	opa_vnic_rem_netdev(adapter);
 	return 0;
 }
@@ -1057,9 +1060,12 @@ static int __init opa_vnic_init(void)
 	pr_info("OPA Virtual Network Driver - v%s\n",
 		opa_vnic_driver_version);
 
+	opa_vnic_dbg_init();
 	rc = ib_register_client(&opa_vnic_client);
-	if (rc)
+	if (rc) {
 		pr_err("VNIC driver register failed %d\n", rc);
+		opa_vnic_dbg_exit();
+	}
 
 	return rc;
 }
@@ -1068,6 +1074,7 @@ module_init(opa_vnic_init);
 static void opa_vnic_deinit(void)
 {
 	ib_unregister_client(&opa_vnic_client);
+	opa_vnic_dbg_exit();
 }
 module_exit(opa_vnic_deinit);
 
