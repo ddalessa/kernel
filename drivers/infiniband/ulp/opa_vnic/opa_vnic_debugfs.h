@@ -52,11 +52,15 @@
  */
 
 #ifdef CONFIG_DEBUG_FS
+void opa_vnic_dbg_ctrl_init(struct opa_vnic_ctrl_port *cport);
+void opa_vnic_dbg_ctrl_exit(struct opa_vnic_ctrl_port *cport);
 void opa_vnic_dbg_vport_init(struct opa_vnic_adapter *adapter);
 void opa_vnic_dbg_vport_exit(struct opa_vnic_adapter *adapter);
 void opa_vnic_dbg_init(void);
 void opa_vnic_dbg_exit(void);
 #else
+static void opa_vnic_dbg_ctrl_init(struct opa_vnic_ctrl_port *cport) {}
+static void opa_vnic_dbg_ctrl_exit(struct opa_vnic_ctrl_port *cport) {}
 static inline void opa_vnic_dbg_vport_init(struct opa_vnic_adapter *adapter) {}
 static inline void opa_vnic_dbg_vport_exit(struct opa_vnic_adapter *adapter) {}
 static inline void opa_vnic_dbg_init(void) {}

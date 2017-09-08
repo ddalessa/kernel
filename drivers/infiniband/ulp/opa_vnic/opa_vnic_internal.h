@@ -243,6 +243,32 @@ struct opa_vnic_mac_tbl_node {
 	struct __opa_vnic_mactable_entry     entry;
 };
 
+/**
+ * struct opa_vnic_vema_port -- VNIC VEMA port details
+ * @cport: pointer to port
+ * @mad_agent: pointer to mad agent for port
+ * @class_port_info: Class port info information.
+ * @tid: Transaction id
+ * @port_num: OPA port number
+ * @vport_idr: vnic ports idr
+ * @event_handler: ib event handler
+ * @dentry: Pointer to port debugfs node
+ * @lock: adapter interface lock
+ */
+struct opa_vnic_vema_port {
+	struct opa_vnic_ctrl_port      *cport;
+	struct ib_mad_agent            *mad_agent;
+	struct opa_class_port_info      class_port_info;
+	u64                             tid;
+	u8                              port_num;
+	struct idr                      vport_idr;
+	struct ib_event_handler         event_handler;
+	struct dentry                  *dentry;
+
+	/* Lock to query/update network adapter */
+	struct mutex                    lock;
+};
+
 #define v_dbg(format, arg...) \
 	netdev_dbg(adapter->netdev, format, ## arg)
 #define v_err(format, arg...) \
@@ -328,5 +354,9 @@ void opa_vnic_set_ethtool_ops(struct net_device *netdev);
 void opa_vnic_vema_send_trap(struct opa_vnic_adapter *adapter,
 			     struct __opa_veswport_trap *data, u32 lid);
 void vema_get_pod_values(struct opa_veswport_info *port_info);
+struct opa_vnic_vema_port *vema_get_port(struct opa_vnic_ctrl_port *cport,
+					 u8 port_num);
+struct opa_vnic_adapter *vema_add_vport(struct opa_vnic_vema_port *port,
+					u8 vport_num);
 
 #endif /* _OPA_VNIC_INTERNAL_H */
