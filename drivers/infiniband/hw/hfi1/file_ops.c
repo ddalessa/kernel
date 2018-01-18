@@ -210,6 +210,7 @@ static int hfi1_file_open(struct inode *inode, struct file *fp)
 		fd->dd = dd;
 		fp->private_data = fd;
 	} else {
+		kobject_put(&dd->kobj);
 		fp->private_data = NULL;
 
 		if (atomic_dec_and_test(&dd->user_refcount))
