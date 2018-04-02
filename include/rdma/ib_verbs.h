@@ -395,6 +395,11 @@ enum ib_mtu {
 	IB_MTU_4096 = 5
 };
 
+enum opa_mtu {
+	OPA_MTU_8192 = 6,
+	OPA_MTU_10240 = 7
+};
+
 static inline int ib_mtu_enum_to_int(enum ib_mtu mtu)
 {
 	switch (mtu) {
@@ -419,6 +424,24 @@ static inline enum ib_mtu ib_mtu_int_to_enum(int mtu)
 		return IB_MTU_512;
 	else
 		return IB_MTU_256;
+}
+
+static inline int opa_mtu_enum_to_int(enum opa_mtu mtu)
+{
+	switch (mtu) {
+	case OPA_MTU_8192: return 8192;
+	case OPA_MTU_10240: return 10240;
+	default: return(ib_mtu_enum_to_int((enum ib_mtu) mtu));
+	}
+}
+
+static inline enum opa_mtu opa_mtu_int_to_enum(int mtu)
+{
+	if (mtu >= 10240)
+		return OPA_MTU_10240;
+	else if (mtu >= 8192)
+		return OPA_MTU_8192;
+	else return ((enum opa_mtu) ib_mtu_int_to_enum(mtu));
 }
 
 enum ib_port_state {
@@ -2995,6 +3018,31 @@ static inline bool rdma_cap_read_inv(struct ib_device *dev, u32 port_num)
 	 * has support for it yet.
 	 */
 	return rdma_protocol_iwarp(dev, port_num);
+}
+
+/**
+ * rdma_core_cap_opa_port - Return whether the RDMA Port is OPA or not.
+ *
+ * @device: Device
+ * @port_num: 1 based Port number
+ *
+ * Return true if the port is an Intel OPA port false if not.
+ */
+
+static inline bool rdma_core_cap_opa_port(struct ib_device *device,
+					  u32 port_num)
+{
+	return (device->port_immutable[port_num].core_cap_flags & RDMA_CORE_PORT_INTEL_OPA)
+		== RDMA_CORE_PORT_INTEL_OPA;
+}
+
+static inline int rdma_mtu_enum_to_int(struct ib_device *device, u8 port,
+				       int mtu)
+{
+	if (rdma_core_cap_opa_port(device, port))
+		return opa_mtu_enum_to_int((enum opa_mtu) mtu);
+	else
+		return ib_mtu_enum_to_int((enum ib_mtu) mtu);
 }
 
 int ib_query_gid(struct ib_device *device,

@@ -1367,7 +1367,7 @@ static void qib_notify_new_ah(struct ib_device *ibdev,
 	ibp = to_iport(ibdev, rdma_ah_get_port_num(ah_attr));
 	ppd = ppd_from_ibp(ibp);
 	ah->vl = ibp->sl_to_vl[rdma_ah_get_sl(&ah->attr)];
-	ah->log_pmtu = ilog2(ppd->ibmtu);
+	ah->pmtu = ppd->ibmtu;
 }
 
 struct ib_ah *qib_create_qp0_ah(struct qib_ibport *ibp, u16 dlid)

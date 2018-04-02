@@ -168,15 +168,6 @@ static void flush_iowait(struct rvt_qp *qp)
 	write_sequnlock_irqrestore(lock, flags);
 }
 
-static inline int opa_mtu_enum_to_int(int mtu)
-{
-	switch (mtu) {
-	case OPA_MTU_8192:  return 8192;
-	case OPA_MTU_10240: return 10240;
-	default:            return -1;
-	}
-}
-
 /**
  * This function is what we would push to the core layer if we wanted to be a
  * "first class citizen".  Instead we hide this here and rely on Verbs ULPs
@@ -184,15 +175,9 @@ static inline int opa_mtu_enum_to_int(int mtu)
  */
 static inline int verbs_mtu_enum_to_int(struct ib_device *dev, enum ib_mtu mtu)
 {
-	int val;
-
-	/* Constraining 10KB packets to 8KB packets */
 	if (mtu == (enum ib_mtu)OPA_MTU_10240)
 		mtu = OPA_MTU_8192;
-	val = opa_mtu_enum_to_int((int)mtu);
-	if (val > 0)
-		return val;
-	return ib_mtu_enum_to_int(mtu);
+	return opa_mtu_enum_to_int((enum opa_mtu)mtu);
 }
 
 int hfi1_check_modify_qp(struct rvt_qp *qp, struct ib_qp_attr *attr,
@@ -308,13 +293,13 @@ int hfi1_check_send_wqe(struct rvt_qp *qp,
 		break;
 	case IB_QPT_SMI:
 		ah = ibah_to_rvtah(wqe->ud_wr.ah);
-		if (wqe->length > (1 << ah->log_pmtu))
+		if (wqe->length > ah->pmtu)
 			return -EINVAL;
 		break;
 	case IB_QPT_GSI:
 	case IB_QPT_UD:
 		ah = ibah_to_rvtah(wqe->ud_wr.ah);
-		if (wqe->length > (1 << ah->log_pmtu))
+		if (wqe->length > ah->pmtu)
 			return -EINVAL;
 		if (ibp->sl_to_sc[rdma_ah_get_sl(&ah->attr)] == 0xf)
 			return -EINVAL;

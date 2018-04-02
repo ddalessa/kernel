@@ -1721,6 +1721,12 @@ static inline int valid_ib_mtu(unsigned int mtu)
 		mtu == 4096;
 }
 
+static inline int valid_opa_mtu(unsigned int mtu)
+{
+	return  valid_ib_mtu(mtu) || mtu == 8192 ||
+		mtu == 10240;
+}
+
 static inline int valid_opa_max_mtu(unsigned int mtu)
 {
 	return mtu >= 2048 &&

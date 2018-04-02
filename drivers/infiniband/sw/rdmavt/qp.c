@@ -1835,7 +1835,7 @@ static int rvt_post_one_wr(struct rvt_qp *qp,
 	    qp->ibqp.qp_type != IB_QPT_RC) {
 		struct rvt_ah *ah = ibah_to_rvtah(wqe->ud_wr.ah);
 
-		log_pmtu = ah->log_pmtu;
+		log_pmtu =  ilog2(ah->pmtu);
 		atomic_inc(&ibah_to_rvtah(ud_wr(wr)->ah)->refcount);
 	}
 

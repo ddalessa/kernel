@@ -402,7 +402,7 @@ int qib_check_send_wqe(struct rvt_qp *qp,
 	case IB_QPT_GSI:
 	case IB_QPT_UD:
 		ah = ibah_to_rvtah(wqe->ud_wr.ah);
-		if (wqe->length > (1 << ah->log_pmtu))
+		if (wqe->length > ah->pmtu)
 			return -EINVAL;
 		/* progress hint */
 		ret = 1;

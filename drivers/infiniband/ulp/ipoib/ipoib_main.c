@@ -2257,7 +2257,7 @@ static struct net_device *ipoib_add_port(const char *format,
 		goto device_init_failed;
 	}
 
-	priv->max_ib_mtu = ib_mtu_enum_to_int(attr.max_mtu);
+	priv->max_ib_mtu = rdma_mtu_enum_to_int(hca, port, attr.max_mtu);
 
 	/* MTU will be reset when mcast join happens */
 	priv->dev->mtu  = IPOIB_UD_MTU(priv->max_ib_mtu);

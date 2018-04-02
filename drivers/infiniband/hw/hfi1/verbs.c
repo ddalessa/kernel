@@ -1481,9 +1481,10 @@ static int query_port(struct rvt_dev_info *rdi, u8 port_num,
 	 * from the Path Records to us will get the new 8k MTU.  Those that
 	 * attempt to process the MTU enum may fail in various ways.
 	 */
-	props->max_mtu = mtu_to_enum((!valid_ib_mtu(hfi1_max_mtu) ?
-				      4096 : hfi1_max_mtu), IB_MTU_4096);
-	props->active_mtu = !valid_ib_mtu(ppd->ibmtu) ? props->max_mtu :
+	props->max_mtu = mtu_to_enum((!valid_opa_mtu(hfi1_max_mtu) ?
+				      4096 : hfi1_max_mtu),
+				     IB_MTU_4096);
+	props->active_mtu = !valid_opa_mtu(ppd->ibmtu) ? props->max_mtu :
 		mtu_to_enum(ppd->ibmtu, IB_MTU_4096);
 
 	/*
@@ -1617,7 +1618,7 @@ static void hfi1_notify_new_ah(struct ib_device *ibdev,
 	dd = dd_from_ppd(ppd);
 	ah->vl = sc_to_vlt(dd, sc5);
 	if (ah->vl < num_vls || ah->vl == 15)
-		ah->log_pmtu = ilog2(dd->vld[ah->vl].mtu);
+		ah->pmtu = dd->vld[ah->vl].mtu;
 }
 
 /**

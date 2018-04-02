@@ -243,10 +243,14 @@ static int ipoib_mcast_join_finish(struct ipoib_mcast *mcast,
 		if (priv->mcast_mtu == priv->admin_mtu)
 			priv->admin_mtu =
 			priv->mcast_mtu =
-			IPOIB_UD_MTU(ib_mtu_enum_to_int(priv->broadcast->mcmember.mtu));
+			IPOIB_UD_MTU(rdma_mtu_enum_to_int(priv->ca,
+							  priv->port,
+							  priv->broadcast->mcmember.mtu));
 		else
 			priv->mcast_mtu =
-			IPOIB_UD_MTU(ib_mtu_enum_to_int(priv->broadcast->mcmember.mtu));
+			IPOIB_UD_MTU(rdma_mtu_enum_to_int(priv->ca,
+							  priv->port,
+							  priv->broadcast->mcmember.mtu));
 
 		priv->qkey = be32_to_cpu(priv->broadcast->mcmember.qkey);
 		spin_unlock_irq(&priv->lock);

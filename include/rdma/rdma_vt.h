@@ -189,8 +189,8 @@ struct rvt_ah {
 	struct ib_ah ibah;
 	struct rdma_ah_attr attr;
 	atomic_t refcount;
+	u16 pmtu;
 	u8 vl;
-	u8 log_pmtu;
 };
 
 struct rvt_dev_info;
