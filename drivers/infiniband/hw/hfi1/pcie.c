@@ -79,6 +79,8 @@ static void tune_pcie_caps(struct hfi1_devdata *);
 int hfi1_pcie_init(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	int ret;
+	int aer;
+	u32 data;
 
 	ret = pci_enable_device(pdev);
 	if (ret) {
@@ -130,6 +132,19 @@ int hfi1_pcie_init(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	pci_set_master(pdev);
+
+	aer = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_ERR);
+	if (!aer)
+		goto done;
+	pci_read_config_dword(pdev, aer + PCI_ERR_UNCOR_MASK, &data);
+	if (!(data & PCI_ERR_UNC_UNSUP)) {
+		data |= PCI_ERR_UNC_UNSUP;
+		if (!pci_write_config_dword(pdev, aer + PCI_ERR_UNCOR_MASK,
+					    data))
+			hfi1_early_err(&pdev->dev,
+				       "Masking Unsupported Request error\n");
+	}
+
 	(void)pci_enable_pcie_error_reporting(pdev);
 	goto done;
 
