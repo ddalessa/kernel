@@ -369,7 +369,7 @@ int hfi1_create_ctxtdata(struct hfi1_pportdata *ppd, int numa,
 		rcd->rcv_array_groups = dd->rcv_entries.ngroups;
 		rcd->rhf_rcv_function_map = normal_rhf_rcv_functions;
 
-		mutex_init(&rcd->exp_lock);
+		mutex_init(&rcd->exp_mutex);
 
 		hfi1_cdbg(PROC, "setting up context %u\n", rcd->ctxt);
 
