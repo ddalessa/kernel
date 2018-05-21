@@ -113,8 +113,8 @@ module_param_named(rcvhdrcnt, rcvhdrcnt, uint, S_IRUGO);
 MODULE_PARM_DESC(rcvhdrcnt, "Receive header queue count (default 2048)");
 
 static uint hfi1_hdrq_entsize = 32;
-module_param_named(hdrq_entsize, hfi1_hdrq_entsize, uint, S_IRUGO);
-MODULE_PARM_DESC(hdrq_entsize, "Size of header queue entries: 2 - 8B, 16 - 64B (default), 32 - 128B");
+module_param_named(hdrq_entsize, hfi1_hdrq_entsize, uint, 0444);
+MODULE_PARM_DESC(hdrq_entsize, "Size of header queue entries: 2 - 8B, 16 - 64B, 32 - 128B (default)");
 
 unsigned int user_credit_return_threshold = 33;	/* default is 33% */
 module_param(user_credit_return_threshold, uint, S_IRUGO);
@@ -405,6 +405,8 @@ int hfi1_create_ctxtdata(struct hfi1_pportdata *ppd, int numa,
 
 		rcd->rcvhdrq_cnt = rcvhdrcnt;
 		rcd->rcvhdrqentsize = hfi1_hdrq_entsize;
+		rcd->rhf_offset =
+			rcd->rcvhdrqentsize - sizeof(u64) / sizeof(u32);
 		/*
 		 * Simple Eager buffer allocation: we have already pre-allocated
 		 * the number of RcvArray entry groups. Each ctxtdata structure
