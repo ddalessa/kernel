@@ -49,6 +49,22 @@
 #include "hfi.h"
 #include "verbs.h"
 #include "tid_rdma.h"
+#include "user_exp_rcv.h"
+
+/**
+ * DOC: TID RDMA READ protocol
+ *
+ * This is an end-to-end protocol at the hfi1 level between two nodes that
+ * improves performance by avoiding data copy on the requester side. It
+ * converts a qualified RDMA READ request into a TID RDMA READ request on
+ * the requester side and thereafter handles the request and response
+ * differently. To be qualified, the RDMA READ request should meet the
+ * following:
+ * -- The total data length should be greater than 256K;
+ * -- The total data length should be a multiple of 4K page size;
+ * -- Each local scatter-gather entry should be 4K page aligned;
+ * -- Each local scatter-gather entry should be a multiple of 4K page size;
+ */
 
 #define MAX_EXPECTED_PAGES     (MAX_EXPECTED_BUFFER / PAGE_SIZE)
 
@@ -129,6 +145,27 @@ static inline u32 mask_generation(u32 a)
  * W - max_Write
  * C - Capcode
  */
+
+static struct tid_rdma_flow *find_flow_ib(struct tid_rdma_request *req,
+					  u32 psn, u16 *fidx)
+{
+	u16 head, tail;
+	struct tid_rdma_flow *flow;
+
+	head = req->setup_head;
+	tail = req->clear_tail;
+	for ( ; CIRC_CNT(head, tail, req->n_max_flows);
+	     tail = CIRC_NEXT(tail, req->n_max_flows)) {
+		flow = &req->flows[tail];
+		if (cmp_psn(psn, flow->flow_state.ib_spsn) >= 0 &&
+		    cmp_psn(psn, flow->flow_state.ib_lpsn) <= 0) {
+			if (fidx)
+				*fidx = tail;
+			return flow;
+		}
+	}
+	return NULL;
+}
 
 static u64 tid_rdma_opfn_encode(struct tid_rdma_params *p)
 {
@@ -279,6 +316,15 @@ static void tid_rdma_trigger_resume(struct work_struct *work)
 {
 }
 
+void hfi1_kern_clear_hw_flow(struct hfi1_ctxtdata *rcd, struct rvt_qp *qp)
+{
+}
+
+void hfi1_kern_exp_rcv_clear_all(struct tid_rdma_request *req)
+	__must_hold(&req->qp->s_lock)
+{
+}
+
 void hfi1_rc_rcv_tid_rdma_write_req(struct hfi1_packet *packet)
 {
 }
@@ -304,6 +350,11 @@ void hfi1_rc_rcv_tid_rdma_resync(struct hfi1_packet *packet)
 }
 
 void hfi1_rc_rcv_tid_rdma_ack(struct hfi1_packet *packet)
+{
+}
+
+void hfi1_kern_read_tid_flow_free(struct rvt_qp *qp)
+	__must_hold(&qp->s_lock)
 {
 }
 
@@ -347,6 +398,7 @@ int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 		      struct ib_qp_init_attr *init_attr)
 {
 	struct hfi1_qp_priv *qpriv = qp->priv;
+	int i;
 
 	qpriv->rcd = qp_to_rcd(rdi, qp);
 
@@ -366,6 +418,41 @@ int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 					    GFP_KERNEL, dd->node);
 		if (!qpriv->pages)
 			return -ENOMEM;
+		for (i = 0; i < qp->s_size; i++) {
+			struct hfi1_swqe_priv *priv;
+			struct rvt_swqe *wqe = rvt_get_swqe_ptr(qp, i);
+
+			priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+			if (!priv)
+				return -ENOMEM;
+
+			/*
+			 * Initialize various TID RDMA request variables.
+			 * These variables are "static", which is why they
+			 * can be pre-initialized here before the WRs has
+			 * even been submitted.
+			 * However, non-NULL values for these variables do not
+			 * imply that this WQE has been enabled for TID RDMA.
+			 * Drivers should check the WQE's opcode to determine
+			 * if a request is a TID RDMA one or not.
+			 */
+			priv->tid_req.qp = qp;
+			priv->tid_req.rcd = qpriv->rcd;
+			priv->tid_req.e.swqe = wqe;
+			wqe->priv = priv;
+		}
+		for (i = 0; i < rvt_max_atomic(rdi); i++) {
+			struct hfi1_ack_priv *priv;
+
+			priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+			if (!priv)
+				return -ENOMEM;
+
+			priv->tid_req.qp = qp;
+			priv->tid_req.rcd = qpriv->rcd;
+			priv->tid_req.e.ack = &qp->s_ack_queue[i];
+			qp->s_ack_queue[i].priv = priv;
+		}
 	}
 
 	return 0;
@@ -374,10 +461,109 @@ int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 void hfi1_qp_priv_tid_free(struct rvt_dev_info *rdi, struct rvt_qp *qp)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
+	struct rvt_swqe *wqe;
+	u32 i;
 
 	if (qp->ibqp.qp_type == IB_QPT_RC && HFI1_CAP_IS_KSET(TID_RDMA)) {
+		for (i = 0; i < qp->s_size; i++) {
+			struct hfi1_swqe_priv *priv;
+
+			wqe = rvt_get_swqe_ptr(qp, i);
+			priv = wqe->priv;
+			kfree(priv);
+			wqe->priv = NULL;
+		}
+		for (i = 0; i < rvt_max_atomic(rdi); i++) {
+			struct hfi1_ack_priv *priv = qp->s_ack_queue[i].priv;
+
+			kfree(priv);
+			qp->s_ack_queue[i].priv = NULL;
+		}
 		cancel_work_sync(&priv->opfn.opfn_work);
 		kfree(priv->pages);
 		priv->pages = NULL;
 	}
+}
+
+/*
+ *  "Rewind" the TID request information.
+ *  This means that we reset the state back to ACTIVE,
+ *  find the proper flow, set the flow index to that flow,
+ *  and reset the flow information.
+ */
+void hfi1_tid_rdma_restart_req(struct rvt_qp *qp, struct rvt_swqe *wqe,
+			       u32 *bth2)
+{
+	struct tid_rdma_request *req = wqe_to_tid_req(wqe);
+	struct tid_rdma_flow *flow;
+	int diff;
+	u32 tididx = 0;
+	u16 fidx;
+
+	if (wqe->wr.opcode == IB_WR_TID_RDMA_READ) {
+		*bth2 = mask_psn(qp->s_psn);
+		flow = find_flow_ib(req, *bth2, &fidx);
+		if (!flow)
+			return;
+	} else {
+		return;
+	}
+
+	diff = delta_psn(*bth2, flow->flow_state.ib_spsn);
+
+	flow->sent = 0;
+	flow->pkt = 0;
+	flow->tid_idx = 0;
+	flow->tid_offset = 0;
+	if (diff) {
+		for (tididx = 0; tididx < flow->tidcnt; tididx++) {
+			u32 tidentry = flow->fstate->tid_entry[tididx], tidlen,
+			tidnpkts, npkts;
+
+			flow->tid_offset = 0;
+			tidlen = EXP_TID_GET(tidentry, LEN) * PAGE_SIZE;
+			tidnpkts = rvt_div_round_up_mtu(qp, tidlen);
+			npkts = min_t(u32, diff, tidnpkts);
+			flow->pkt += npkts;
+			flow->sent += (npkts == tidnpkts ? tidlen :
+				       npkts * qp->pmtu);
+			flow->tid_offset += npkts * qp->pmtu;
+			diff -= npkts;
+			if (!diff)
+				break;
+		}
+	}
+
+	if (flow->tid_offset ==
+		EXP_TID_GET(flow->fstate->tid_entry[tididx], LEN) * PAGE_SIZE) {
+		tididx++;
+		flow->tid_offset = 0;
+	}
+	flow->tid_idx = tididx;
+	/* Move flow_idx to correct index */
+	req->flow_idx = fidx;
+
+	req->state = TID_REQUEST_ACTIVE;
+}
+
+u32 hfi1_build_tid_rdma_read_packet(struct rvt_swqe *wqe,
+				    struct ib_other_headers *ohdr,
+				    u32 *bth1, u32 *bth2, u32 *len)
+{
+	return 0;
+}
+
+u32 hfi1_build_tid_rdma_read_req(struct rvt_qp *qp, struct rvt_swqe *wqe,
+				 struct ib_other_headers *ohdr, u32 *bth1,
+				 u32 *bth2, u32 *len)
+	 __must_hold(&qp->s_lock)
+{
+	return 0;
+}
+
+u32 hfi1_build_tid_rdma_read_resp(struct rvt_qp *qp, struct rvt_ack_entry *e,
+				  struct ib_other_headers *ohdr, u32 *bth0,
+				  u32 *bth1, u32 *bth2, u32 *len, bool *last)
+{
+	return 0;
 }

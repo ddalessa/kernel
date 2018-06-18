@@ -260,6 +260,7 @@ void hfi1_compute_tid_rdma_flow_wt(void);
 void hfi1_kern_clear_hw_flow(struct hfi1_ctxtdata *rcd, struct rvt_qp *qp);
 int hfi1_kern_exp_rcv_init(struct hfi1_ctxtdata *rcd, int reinit);
 void hfi1_kern_exp_rcv_clear_all(struct tid_rdma_request *req);
+void hfi1_kern_read_tid_flow_free(struct rvt_qp *qp);
 
 void hfi1_rc_rcv_tid_rdma_write_req(struct hfi1_packet *packet);
 
@@ -283,6 +284,19 @@ int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 		      struct ib_qp_init_attr *init_attr);
 void hfi1_qp_priv_tid_free(struct rvt_dev_info *rdi, struct rvt_qp *qp);
 
+void hfi1_tid_rdma_restart_req(struct rvt_qp *qp, struct rvt_swqe *wqe,
+			       u32 *bth2);
+
 void tid_rdma_opfn_init(struct rvt_qp *qp, struct tid_rdma_params *p);
+
+u32 hfi1_build_tid_rdma_read_packet(struct rvt_swqe *wqe,
+				    struct ib_other_headers *ohdr,
+				    u32 *bth1, u32 *bth2, u32 *len);
+u32 hfi1_build_tid_rdma_read_req(struct rvt_qp *qp, struct rvt_swqe *wqe,
+				 struct ib_other_headers *ohdr, u32 *bth1,
+				 u32 *bth2, u32 *len);
+u32 hfi1_build_tid_rdma_read_resp(struct rvt_qp *qp, struct rvt_ack_entry *e,
+				  struct ib_other_headers *ohdr, u32 *bth0,
+				  u32 *bth1, u32 *bth2, u32 *len, bool *last);
 
 #endif /* HFI1_TID_RDMA_H */
