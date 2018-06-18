@@ -182,6 +182,7 @@ struct hfi1_qp_priv {
 	u8 s_state;
 	u8 s_nak_state;
 	u8 s_retry;
+	u32 s_nak_psn;
 	u32 s_flags;
 	u32 s_tid_cur;
 	u32 s_tid_head;
@@ -203,6 +204,8 @@ struct hfi1_qp_priv {
 	u8 rnr_nak_state;       /* RNR NAK state */
 	u32 r_next_psn_ib;
 	u32 r_next_psn_kdeth;
+	u32 r_next_psn_kdeth_save;
+	u32 s_resync_psn;
 	bool sync_pt;           /* Set when QP reaches sync point */
 	bool resync;
 };
