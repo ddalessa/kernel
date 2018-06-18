@@ -291,6 +291,9 @@ bool hfi1_handle_kdeth_eflags(struct hfi1_ctxtdata *rcd,
 			      struct hfi1_pportdata *ppd,
 			      struct hfi1_packet *packet);
 
+bool hfi1_tid_rdma_wqe_interlock(struct rvt_qp *qp, struct rvt_swqe *wqe);
+bool hfi1_tid_rdma_ack_interlock(struct rvt_qp *qp, struct rvt_ack_entry *e);
+
 void hfi1_del_tid_reap_timer(struct rvt_qp *qp);
 
 void hfi1_add_tid_retry_timer(struct rvt_qp *qp);
