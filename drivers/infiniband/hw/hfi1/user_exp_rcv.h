@@ -1,7 +1,7 @@
 #ifndef _HFI1_USER_EXP_RCV_H
 #define _HFI1_USER_EXP_RCV_H
 /*
- * Copyright(c) 2015 - 2017 Intel Corporation.
+ * Copyright(c) 2015 - 2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -48,7 +48,7 @@
  */
 
 #include "hfi.h"
-
+#include "mmu_rb.h"
 #include "exp_rcv.h"
 
 struct tid_pageset {
