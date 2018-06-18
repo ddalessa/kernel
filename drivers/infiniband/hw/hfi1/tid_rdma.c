@@ -3895,6 +3895,82 @@ nak_psn:
 	goto unlock;
 }
 
+bool hfi1_tid_rdma_wqe_interlock(struct rvt_qp *qp, struct rvt_swqe *wqe)
+{
+	struct rvt_swqe *prev;
+	struct tid_rdma_request *req;
+	struct hfi1_qp_priv *priv = qp->priv;
+	u32 s_prev;
+
+	s_prev = (qp->s_cur == 0 ? qp->s_size : qp->s_cur) - 1;
+	prev = rvt_get_swqe_ptr(qp, s_prev);
+
+	switch (wqe->wr.opcode) {
+	case IB_WR_SEND:
+	case IB_WR_SEND_WITH_IMM:
+	case IB_WR_SEND_WITH_INV:
+	case IB_WR_ATOMIC_CMP_AND_SWP:
+	case IB_WR_ATOMIC_FETCH_AND_ADD:
+	case IB_WR_RDMA_WRITE:
+		switch (prev->wr.opcode) {
+		case IB_WR_TID_RDMA_WRITE:
+			req = wqe_to_tid_req(prev);
+			if (req->ack_seg != req->total_segs)
+				goto interlock;
+		default:
+			break;
+		}
+	case IB_WR_RDMA_READ:
+		if (prev->wr.opcode != IB_WR_TID_RDMA_WRITE)
+			break;
+		/* fall through */
+	case IB_WR_TID_RDMA_READ:
+		switch (prev->wr.opcode) {
+		case IB_WR_RDMA_READ:
+			if (qp->s_acked != qp->s_cur)
+				goto interlock;
+			break;
+		case IB_WR_TID_RDMA_WRITE:
+			req = wqe_to_tid_req(prev);
+			if (req->ack_seg != req->total_segs)
+				goto interlock;
+		default:
+			break;
+		}
+	default:
+		break;
+	}
+	return false;
+
+interlock:
+	priv->s_flags |= HFI1_S_TID_WAIT_INTERLCK;
+	return true;
+}
+
+bool hfi1_tid_rdma_ack_interlock(struct rvt_qp *qp, struct rvt_ack_entry *e)
+{
+	struct rvt_ack_entry *prev;
+	struct tid_rdma_request *req;
+	struct hfi1_ibdev *dev = to_idev(qp->ibqp.device);
+	struct hfi1_qp_priv *priv = qp->priv;
+	u32 s_prev;
+
+	s_prev = qp->s_tail_ack_queue == 0 ? rvt_size_atomic(&dev->rdi) :
+		(qp->s_tail_ack_queue - 1);
+	prev = &qp->s_ack_queue[s_prev];
+
+	if ((e->opcode == TID_OP(READ_REQ) ||
+	     e->opcode == OP(RDMA_READ_REQUEST)) &&
+	    prev->opcode == TID_OP(WRITE_REQ)) {
+		req = ack_to_tid_req(prev);
+		if (req->ack_seg != req->total_segs) {
+			priv->s_flags |= HFI1_R_TID_WAIT_INTERLCK;
+			return true;
+		}
+	}
+	return false;
+}
+
 static void hfi1_tid_retry_timeout(struct timer_list *t)
 {
 	struct hfi1_qp_priv *priv = from_timer(priv, t, s_tid_retry_timer);
