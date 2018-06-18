@@ -259,6 +259,7 @@ void tid_rdma_flush_wait(struct rvt_qp *qp);
 void hfi1_compute_tid_rdma_flow_wt(void);
 void hfi1_kern_clear_hw_flow(struct hfi1_ctxtdata *rcd, struct rvt_qp *qp);
 int hfi1_kern_exp_rcv_init(struct hfi1_ctxtdata *rcd, int reinit);
+int hfi1_kern_exp_rcv_clear(struct tid_rdma_request *req);
 void hfi1_kern_exp_rcv_clear_all(struct tid_rdma_request *req);
 void hfi1_kern_read_tid_flow_free(struct rvt_qp *qp);
 
