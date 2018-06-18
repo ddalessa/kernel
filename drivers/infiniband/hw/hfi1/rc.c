@@ -123,6 +123,7 @@ static int make_rc_ack(struct hfi1_ibdev *dev, struct rvt_qp *qp,
 	bool last_pkt;
 	u32 delta;
 
+	trace_hfi1_rsp_make_rc_ack(qp, 0);
 	lockdep_assert_held(&qp->s_lock);
 	/* Don't send an ACK if we aren't supposed to. */
 	if (!(ib_rvt_state_ops[qp->state] & RVT_PROCESS_RECV_OK))
@@ -161,6 +162,7 @@ static int make_rc_ack(struct hfi1_ibdev *dev, struct rvt_qp *qp,
 		    qp->s_acked_ack_queue == qp->s_tail_ack_queue)
 			qp->s_acked_ack_queue = next;
 		qp->s_tail_ack_queue = next;
+		trace_hfi1_rsp_make_rc_ack(qp, e->psn);
 		/* FALLTHROUGH */
 	case OP(SEND_ONLY):
 	case OP(ACKNOWLEDGE):
@@ -262,6 +264,7 @@ static int make_rc_ack(struct hfi1_ibdev *dev, struct rvt_qp *qp,
 			bth2 = mask_psn(e->psn);
 			e->sent = 1;
 		}
+		trace_hfi1_tid_write_rsp_make_rc_ack(qp);
 		if (!bth0)
 			bth0 = qp->s_ack_state << 24;
 		break;
@@ -335,6 +338,8 @@ write_resp:
 		hwords += hdrlen;
 		bth0 = qp->s_ack_state << 24;
 		qp->s_ack_rdma_psn++;
+		trace_hfi1_tid_req_make_rc_ack_write(qp, 0, e->opcode, e->psn,
+						     e->lpsn, req);
 		if (req->cur_seg != req->total_segs)
 			break;
 
@@ -446,6 +451,7 @@ int hfi1_make_rc_req(struct rvt_qp *qp, struct hfi1_pkt_state *ps)
 	int delta;
 	struct tid_rdma_flow *flow = NULL;
 
+	trace_hfi1_sender_make_rc_req(qp);
 	lockdep_assert_held(&qp->s_lock);
 	ps->s_txreq = get_txreq(ps->dev, qp);
 	if (!ps->s_txreq)
@@ -762,6 +768,11 @@ no_flow_control:
 					delta_psn(wqe->lpsn, bth2) + 1;
 			}
 
+			trace_hfi1_tid_write_sender_make_req(qp, newreq);
+			trace_hfi1_tid_req_make_req_write(qp, newreq,
+							  wqe->wr.opcode,
+							  wqe->psn, wqe->lpsn,
+							  req);
 			if (++qp->s_cur == qp->s_size)
 				qp->s_cur = 0;
 			break;
@@ -795,8 +806,13 @@ no_flow_control:
 			break;
 
 		case IB_WR_TID_RDMA_READ:
+			trace_hfi1_tid_read_sender_make_req(qp, newreq);
 			wpriv = wqe->priv;
 			req = wqe_to_tid_req(wqe);
+			trace_hfi1_tid_req_make_req_read(qp, newreq,
+							 wqe->wr.opcode,
+							 wqe->psn, wqe->lpsn,
+							 req);
 			delta = cmp_psn(qp->s_psn, wqe->psn);
 
 			/*
@@ -1066,6 +1082,8 @@ no_flow_control:
 		priv->s_tid_cur = qp->s_cur;
 		if (++qp->s_cur == qp->s_size)
 			qp->s_cur = 0;
+		trace_hfi1_tid_req_make_req_write(qp, 0, wqe->wr.opcode,
+						  wqe->psn, wqe->lpsn, req);
 		break;
 
 	case TID_OP(READ_RESP):
@@ -1119,6 +1137,8 @@ no_flow_control:
 		    ++qp->s_cur == qp->s_size)
 			qp->s_cur = 0;
 		qp->s_psn = req->s_next_psn;
+		trace_hfi1_tid_req_make_req_read(qp, 0, wqe->wr.opcode,
+						 wqe->psn, wqe->lpsn, req);
 		break;
 	case TID_OP(READ_REQ):
 		req = wqe_to_tid_req(wqe);
@@ -1160,6 +1180,8 @@ no_flow_control:
 		    ++qp->s_cur == qp->s_size)
 			qp->s_cur = 0;
 		qp->s_psn = req->s_next_psn;
+		trace_hfi1_tid_req_make_req_read(qp, 0, wqe->wr.opcode,
+						 wqe->psn, wqe->lpsn, req);
 		break;
 	}
 	qp->s_sending_hpsn = bth2;
@@ -1582,6 +1604,7 @@ done:
 	    (cmp_psn(qp->s_sending_psn, qp->s_sending_hpsn) <= 0))
 		qp->s_flags |= RVT_S_WAIT_PSN;
 	qp->s_flags &= ~HFI1_S_AHG_VALID;
+	trace_hfi1_sender_reset_psn(qp);
 }
 
 /*
@@ -1596,6 +1619,7 @@ void hfi1_restart_rc(struct rvt_qp *qp, u32 psn, int wait)
 
 	lockdep_assert_held(&qp->r_lock);
 	lockdep_assert_held(&qp->s_lock);
+	trace_hfi1_sender_restart_rc(qp);
 	if (qp->s_retry == 0) {
 		if (qp->s_mig_state == IB_MIG_ARMED) {
 			hfi1_migrate_qp(qp);
@@ -1617,6 +1641,7 @@ void hfi1_restart_rc(struct rvt_qp *qp, u32 psn, int wait)
 				wqe = do_rc_completion(qp, wqe, ibp);
 				qp->s_flags &= ~RVT_S_WAIT_ACK;
 			} else {
+				trace_hfi1_tid_write_sender_restart_rc(qp, 0);
 				if (wqe->wr.opcode == IB_WR_TID_RDMA_READ) {
 					struct tid_rdma_request *req;
 
@@ -1852,6 +1877,7 @@ struct rvt_swqe *do_rc_completion(struct rvt_qp *qp,
 	 * completion if the SWQE is being resent until the send
 	 * is finished.
 	 */
+	trace_hfi1_rc_completion(qp, wqe->lpsn);
 	if (cmp_psn(wqe->lpsn, qp->s_sending_psn) < 0 ||
 	    cmp_psn(qp->s_sending_psn, qp->s_sending_hpsn) > 0) {
 		u32 s_last;
@@ -2093,6 +2119,8 @@ int do_rc_ack(struct rvt_qp *qp, u32 aeth, u32 psn, int opcode, u64 val,
 			break;
 	}
 
+	trace_hfi1_rc_ack_do(qp, aeth, psn, wqe);
+	trace_hfi1_sender_do_rc_ack(qp);
 	switch (aeth >> IB_AETH_NAK_SHIFT) {
 	case 0:         /* ACK */
 		this_cpu_inc(*ibp->rvp.rc_acks);
