@@ -311,6 +311,7 @@ static inline bool wss_exceeds_threshold(void)
  */
 const enum ib_wc_opcode ib_hfi1_wc_opcode[] = {
 	[IB_WR_RDMA_WRITE] = IB_WC_RDMA_WRITE,
+	[IB_WR_TID_RDMA_WRITE] = IB_WC_RDMA_WRITE,
 	[IB_WR_RDMA_WRITE_WITH_IMM] = IB_WC_RDMA_WRITE,
 	[IB_WR_SEND] = IB_WC_SEND,
 	[IB_WR_SEND_WITH_IMM] = IB_WC_SEND,
@@ -555,7 +556,7 @@ static inline opcode_handler qp_ok(struct hfi1_packet *packet)
 static u64 hfi1_fault_tx(struct rvt_qp *qp, u8 opcode, u64 pbc)
 {
 #ifdef CONFIG_FAULT_INJECTION
-	if ((opcode & IB_OPCODE_MSP) == IB_OPCODE_MSP)
+	if ((opcode & IB_OPCODE_MSP) == IB_OPCODE_MSP) {
 		/*
 		 * In order to drop non-IB traffic we
 		 * set PbcInsertHrc to NONE (0x2).
@@ -566,8 +567,9 @@ static u64 hfi1_fault_tx(struct rvt_qp *qp, u8 opcode, u64 pbc)
 		 * packet will not be delivered to the
 		 * correct context.
 		 */
+		pbc &= ~PBC_INSERT_HCRC_SMASK;
 		pbc |= (u64)PBC_IHCRC_NONE << PBC_INSERT_HCRC_SHIFT;
-	else
+	} else {
 		/*
 		 * In order to drop regular verbs
 		 * traffic we set the PbcTestEbp
@@ -577,6 +579,7 @@ static u64 hfi1_fault_tx(struct rvt_qp *qp, u8 opcode, u64 pbc)
 		 * triggered and will be dropped.
 		 */
 		pbc |= PBC_TEST_EBP;
+	}
 #endif
 	return pbc;
 }
@@ -909,46 +912,54 @@ static int wait_kmem(struct hfi1_ibdev *dev,
 	return ret;
 }
 
+static noinline int handle_corrupted_sge(struct sdma_engine *sde,
+					 struct verbs_txreq *tx)
+{
+	tx->txreq.flags |= SDMA_TXREQ_F_SGE_CORRUPT;
+	return -EINVAL;
+}
+
 /*
  * This routine calls txadds for each sg entry.
  *
  * Add failures will revert the sge cursor
  */
-static noinline int build_verbs_ulp_payload(
-	struct sdma_engine *sde,
-	u32 length,
-	struct verbs_txreq *tx)
+static noinline int build_verbs_ulp_payload(struct sdma_engine *sde,
+					    u32 length,
+					    struct verbs_txreq *tx)
 {
-	struct rvt_sge_state *ss = tx->ss;
-	struct rvt_sge *sg_list = ss->sg_list;
-	struct rvt_sge sge = ss->sge;
-	u8 num_sge = ss->num_sge;
+	struct rvt_sge *sg_list = tx->ss->sg_list;
+	struct rvt_sge sge = tx->ss->sge;
+	u8 num_sge = tx->ss->num_sge;
 	u32 len;
 	int ret = 0;
 
 	while (length) {
-		len = ss->sge.length;
+		len = tx->ss->sge.length;
 		if (len > length)
 			len = length;
-		if (len > ss->sge.sge_length)
-			len = ss->sge.sge_length;
-		WARN_ON_ONCE(len == 0);
+		if (len > tx->ss->sge.sge_length)
+			len = tx->ss->sge.sge_length;
+		if (WARN_ON_ONCE(len == 0)) {
+			ret = handle_corrupted_sge(sde, tx);
+			goto bail_txadd;
+		}
 		ret = sdma_txadd_kvaddr(
 			sde->dd,
 			&tx->txreq,
-			ss->sge.vaddr,
+			tx->ss->sge.vaddr,
 			len);
 		if (ret)
 			goto bail_txadd;
-		rvt_update_sge(ss, len, false);
+		rvt_update_sge(tx->ss, len, false);
 		length -= len;
 	}
 	return ret;
 bail_txadd:
 	/* unwind cursor */
-	ss->sge = sge;
-	ss->num_sge = num_sge;
-	ss->sg_list = sg_list;
+	tx->ss->sge = sge;
+	tx->ss->num_sge = num_sge;
+	tx->ss->sg_list = sg_list;
 	return ret;
 }
 
@@ -1097,6 +1108,14 @@ int hfi1_verbs_send_dma(struct rvt_qp *qp, struct hfi1_pkt_state *ps,
 					 qp->srate_mbps,
 					 vl,
 					 plen);
+
+			/* Update HCRC based on packet opcode */
+			if ((ps->opcode & IB_OPCODE_TID_RDMA) ==
+			    IB_OPCODE_TID_RDMA) {
+				pbc &= ~PBC_INSERT_HCRC_SMASK;
+				pbc |= (u64)PBC_IHCRC_LKDETH <<
+					PBC_INSERT_HCRC_SHIFT;
+			}
 		}
 		tx->wqe = qp->s_wqe;
 		ret = build_verbs_tx_desc(tx->sde, len, tx, ahg_info, pbc);
@@ -1119,8 +1138,11 @@ bail_ecomm:
 	/* The current one got "sent" */
 	return 0;
 bail_build:
+	if (unlikely(tx->txreq.flags & SDMA_TXREQ_F_SGE_CORRUPT))
+		goto put_txreq;
 	ret = wait_kmem(dev, qp, ps);
 	if (!ret) {
+put_txreq:
 		/* free txreq - bad state */
 		hfi1_put_txreq(ps->s_txreq);
 		ps->s_txreq = NULL;
@@ -1193,7 +1215,6 @@ int hfi1_verbs_send_pio(struct rvt_qp *qp, struct hfi1_pkt_state *ps,
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 	u32 hdrwords = ps->s_txreq->hdr_dwords;
-	struct rvt_sge_state *ss = ps->s_txreq->ss;
 	u32 len = ps->s_txreq->s_cur_size;
 	u32 dwords;
 	u32 plen;
@@ -1246,6 +1267,12 @@ int hfi1_verbs_send_pio(struct rvt_qp *qp, struct hfi1_pkt_state *ps,
 		if (unlikely(hfi1_dbg_should_fault_tx(qp, ps->opcode)))
 			pbc = hfi1_fault_tx(qp, ps->opcode, pbc);
 		pbc = create_pbc(ppd, pbc, qp->srate_mbps, vl, plen);
+
+		/* Update HCRC based on packet opcode */
+		if ((ps->opcode & IB_OPCODE_TID_RDMA) == IB_OPCODE_TID_RDMA) {
+			pbc &= ~PBC_INSERT_HCRC_SMASK;
+			pbc |= (u64)PBC_IHCRC_LKDETH << PBC_INSERT_HCRC_SHIFT;
+		}
 	}
 	if (cb)
 		iowait_pio_inc(&priv->s_iowait);
@@ -1286,14 +1313,14 @@ int hfi1_verbs_send_pio(struct rvt_qp *qp, struct hfi1_pkt_state *ps,
 	} else {
 		seg_pio_copy_start(pbuf, pbc,
 				   hdr, hdrwords * 4);
-		if (ss) {
+		if (ps->s_txreq->ss) {
 			while (len) {
-				void *addr = ss->sge.vaddr;
-				u32 slen = ss->sge.length;
+				void *addr = ps->s_txreq->ss->sge.vaddr;
+				u32 slen = ps->s_txreq->ss->sge.length;
 
 				if (slen > len)
 					slen = len;
-				rvt_update_sge(ss, slen, false);
+				rvt_update_sge(ps->s_txreq->ss, slen, false);
 				seg_pio_copy_mid(pbuf, addr, slen);
 				len -= slen;
 			}
@@ -1437,16 +1464,21 @@ static inline send_routine get_send_routine(struct rvt_qp *qp,
 	case IB_QPT_GSI:
 	case IB_QPT_UD:
 		break;
+	case IB_QPT_RC:
 	case IB_QPT_UC:
-	case IB_QPT_RC: {
+		/*
+		 * RC QPs which support TID RDMA could use PIO for
+		 * TID RDMA WRITE REQ packets. The opcode test should
+		 * allow both valid RC opcodes and TID RDMA WRITE REQ.
+		 */
 		if (piothreshold &&
 		    tx->s_cur_size <= min(piothreshold, qp->pmtu) &&
-		    (BIT(ps->opcode & OPMASK) & pio_opmask[ps->opcode >> 5]) &&
+		    ((BIT(ps->opcode & OPMASK) &
+		      pio_opmask[ps->opcode >> 5])) &&
 		    iowait_sdma_pending(&priv->s_iowait) == 0 &&
 		    !sdma_txreq_built(&tx->txreq))
 			return dd->process_pio_send;
 		break;
-	}
 	default:
 		break;
 	}
@@ -1529,7 +1561,8 @@ int hfi1_verbs_send(struct rvt_qp *qp, struct hfi1_pkt_state *ps)
 				ps->s_txreq->psc,
 				ps,
 				HFI1_S_WAIT_PIO_DRAIN);
-	return sr(qp, ps, 0);
+	ret = sr(qp, ps, 0);
+	return ret;
 }
 
 /**
@@ -1561,7 +1594,9 @@ static void hfi1_fill_device_attr(struct hfi1_devdata *dd)
 	rdi->dparms.props.max_mr_size = U64_MAX;
 	rdi->dparms.props.max_fast_reg_page_list_len = UINT_MAX;
 	rdi->dparms.props.max_qp = hfi1_max_qps;
-	rdi->dparms.props.max_qp_wr = hfi1_max_qp_wrs;
+	rdi->dparms.props.max_qp_wr =
+		(hfi1_max_qp_wrs >= HFI1_QP_WQE_INVALID ?
+		 HFI1_QP_WQE_INVALID - 1 : hfi1_max_qp_wrs);
 	rdi->dparms.props.max_send_sge = hfi1_max_sges;
 	rdi->dparms.props.max_recv_sge = hfi1_max_sges;
 	rdi->dparms.props.max_sge_rd = hfi1_max_sges;

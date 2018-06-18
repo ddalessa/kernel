@@ -228,6 +228,12 @@ struct tid_rdma_flow {
 	u8 resync_npkts;
 };
 
+enum tid_rnr_nak_state {
+	TID_RNR_NAK_INIT = 0,
+	TID_RNR_NAK_SEND,
+	TID_RNR_NAK_SENT,
+};
+
 /**
  * kern_tid_node - used for managing TID's in TID groups
  *
@@ -285,11 +291,17 @@ bool hfi1_handle_kdeth_eflags(struct hfi1_ctxtdata *rcd,
 			      struct hfi1_pportdata *ppd,
 			      struct hfi1_packet *packet);
 
+void hfi1_del_tid_reap_timer(struct rvt_qp *qp);
+
+void hfi1_add_tid_retry_timer(struct rvt_qp *qp);
+void hfi1_del_tid_retry_timer(struct rvt_qp *qp);
+
 bool hfi1_schedule_tid_send(struct rvt_qp *qp);
 
 int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 		      struct ib_qp_init_attr *init_attr);
 void hfi1_qp_priv_tid_free(struct rvt_dev_info *rdi, struct rvt_qp *qp);
+void hfi1_qp_kern_exp_rcv_clear_all(struct rvt_qp *qp);
 
 void hfi1_tid_rdma_restart_req(struct rvt_qp *qp, struct rvt_swqe *wqe,
 			       u32 *bth2);
@@ -297,6 +309,13 @@ void hfi1_tid_rdma_restart_req(struct rvt_qp *qp, struct rvt_swqe *wqe,
 void _hfi1_do_tid_send(struct work_struct *work);
 void tid_rdma_opfn_init(struct rvt_qp *qp, struct tid_rdma_params *p);
 
+u32 hfi1_build_tid_rdma_write_req(struct rvt_qp *qp, struct rvt_swqe *wqe,
+				  struct ib_other_headers *ohdr,
+				  u32 *bth1, u32 *bth2, u32 *len);
+u32 hfi1_build_tid_rdma_write_resp(struct rvt_qp *qp, struct rvt_ack_entry *e,
+				   struct ib_other_headers *ohdr, u32 *bth1,
+				   u32 bth2, u32 *len,
+				   struct rvt_sge_state **ss);
 u32 hfi1_build_tid_rdma_read_packet(struct rvt_swqe *wqe,
 				    struct ib_other_headers *ohdr,
 				    u32 *bth1, u32 *bth2, u32 *len);

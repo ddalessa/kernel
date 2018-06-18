@@ -140,6 +140,12 @@ const struct rvt_operation_params hfi1_post_parms[RVT_OPERATION_MAX] = {
 	.flags = RVT_OPERATION_USE_RESERVE,
 },
 
+[IB_WR_TID_RDMA_WRITE] = {
+	.length = sizeof(struct ib_rdma_wr),
+	.qpt_support = BIT(IB_QPT_RC),
+	.flags = RVT_OPERATION_IGN_RNR_CNT,
+},
+
 };
 
 static void flush_list_head(struct list_head *l)
@@ -748,6 +754,7 @@ void flush_qp_waiters(struct rvt_qp *qp)
 {
 	lockdep_assert_held(&qp->s_lock);
 	flush_iowait(qp);
+	tid_rdma_flush_wait(qp);
 }
 
 void stop_send_queue(struct rvt_qp *qp)
@@ -763,6 +770,8 @@ void quiesce_qp(struct rvt_qp *qp)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 
+	hfi1_del_tid_reap_timer(qp);
+	hfi1_del_tid_retry_timer(qp);
 	iowait_sdma_drain(&priv->s_iowait);
 	qp_pio_drain(qp);
 	flush_tx_list(qp);
@@ -770,6 +779,7 @@ void quiesce_qp(struct rvt_qp *qp)
 
 void notify_qp_reset(struct rvt_qp *qp)
 {
+	hfi1_qp_kern_exp_rcv_clear_all(qp);
 	qp->r_adefered = 0;
 	clear_ahg(qp);
 
