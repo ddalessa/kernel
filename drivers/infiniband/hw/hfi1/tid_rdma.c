@@ -70,6 +70,20 @@
  * -- Each local scatter-gather entry should be a multiple of 4K page size;
  */
 
+/**
+ * DOC: TID RDMA WRITE protocol
+ *
+ * This is an end-to-end protocol at the hfi1 level between two nodes that
+ * improves performance by avoiding data copy on the responder side. It
+ * converts a qualified RDMA WRITE request into a TID RDMA WRITE request on
+ * the requester side and thereafter handles the request and response
+ * differently. To be qualified, the RDMA WRITE request should meet the
+ * following:
+ * -- The total data length should be greater than 256K;
+ * -- The total data length should be a multiple of 4K page size;
+ * -- The remote address should be 4K page aligned;
+ */
+
 #define MAX_EXPECTED_PAGES     (MAX_EXPECTED_BUFFER / PAGE_SIZE)
 
 #define RCV_TID_FLOW_TABLE_CTRL_FLOW_VALID_SMASK BIT_ULL(32)
@@ -191,6 +205,18 @@ static int hfi1_send_tid_ok(struct rvt_qp *qp)
 		(verbs_txreq_queued(iowait_get_tid_work(&priv->s_iowait)) ||
 		 (priv->s_flags & RVT_S_RESP_PENDING) ||
 		 !(qp->s_flags & HFI1_S_ANY_TID_WAIT_SEND));
+}
+
+void hfi1_del_tid_reap_timer(struct rvt_qp *qp)
+{
+}
+
+void hfi1_add_tid_retry_timer(struct rvt_qp *qp)
+{
+}
+
+void hfi1_del_tid_retry_timer(struct rvt_qp *qp)
+{
 }
 
 static u64 tid_rdma_opfn_encode(struct tid_rdma_params *p)
@@ -2257,6 +2283,10 @@ void hfi1_qp_priv_tid_free(struct rvt_dev_info *rdi, struct rvt_qp *qp)
 	}
 }
 
+void hfi1_qp_kern_exp_rcv_clear_all(struct rvt_qp *qp)
+{
+}
+
 u64 hfi1_access_sw_tid_wait(const struct cntr_entry *entry,
 			    void *context, int vl, int mode, u64 data)
 {
@@ -2406,6 +2436,21 @@ static void hfi1_do_tid_send(struct rvt_qp *qp)
 	} while (hfi1_make_tid_rdma_pkt(qp, &ps));
 	iowait_starve_clear(ps.pkts_sent, &priv->s_iowait);
 	spin_unlock_irqrestore(&qp->s_lock, ps.flags);
+}
+
+u32 hfi1_build_tid_rdma_write_req(struct rvt_qp *qp, struct rvt_swqe *wqe,
+				  struct ib_other_headers *ohdr,
+				  u32 *bth1, u32 *bth2, u32 *len)
+{
+	return 0;
+}
+
+u32 hfi1_build_tid_rdma_write_resp(struct rvt_qp *qp, struct rvt_ack_entry *e,
+				   struct ib_other_headers *ohdr, u32 *bth1,
+				   u32 bth2, u32 *len,
+				   struct rvt_sge_state **ss)
+{
+	return 0;
 }
 
 u32 hfi1_build_tid_rdma_read_packet(struct rvt_swqe *wqe,
