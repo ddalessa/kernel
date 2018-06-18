@@ -172,7 +172,9 @@ struct hfi1_qp_priv {
 	u8 hdr_type; /* 9B or 16B */
 	unsigned long tid_timer_timeout_jiffies;
 	unsigned long tid_retry_timeout_jiffies;
+	/* variables for the TID RDMA SE state machine */
 	u8 s_retry;
+	u32 s_flags;
 	/* For TID RDMA READ */
 	u32 tid_r_reqs;         /* Num of tid reads requested */
 	u32 tid_r_comp;         /* Num of tid reads completed */
@@ -413,6 +415,9 @@ u32 hfi1_make_grh(struct hfi1_ibport *ibp, struct ib_grh *hdr,
 void hfi1_make_ruc_header(struct rvt_qp *qp, struct ib_other_headers *ohdr,
 			  u32 bth0, u32 bth1, u32 bth2, int middle,
 			  struct hfi1_pkt_state *ps);
+
+bool hfi1_schedule_send_yield(struct rvt_qp *qp, struct hfi1_pkt_state *ps,
+			      bool tid);
 
 void _hfi1_do_send(struct work_struct *work);
 
