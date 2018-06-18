@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015 - 2017 Intel Corporation.
+ * Copyright(c) 2015 - 2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -839,6 +839,12 @@ DEFINE_EVENT(
 );
 
 DEFINE_EVENT(
+	hfi1_do_send_template, hfi1_rc_do_tid_send,
+	TP_PROTO(struct rvt_qp *qp, bool flag),
+	TP_ARGS(qp, flag)
+);
+
+DEFINE_EVENT(/* expired time slice */
 	hfi1_do_send_template, hfi1_rc_expired_time_slice,
 	TP_PROTO(struct rvt_qp *qp, bool flag),
 	TP_ARGS(qp, flag)
