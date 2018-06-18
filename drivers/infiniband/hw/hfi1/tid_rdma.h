@@ -263,6 +263,10 @@ int hfi1_kern_exp_rcv_clear(struct tid_rdma_request *req);
 void hfi1_kern_exp_rcv_clear_all(struct tid_rdma_request *req);
 void hfi1_kern_read_tid_flow_free(struct rvt_qp *qp);
 
+struct cntr_entry;
+u64 hfi1_access_sw_tid_wait(const struct cntr_entry *entry,
+			    void *context, int vl, int mode, u64 data);
+
 void hfi1_rc_rcv_tid_rdma_write_req(struct hfi1_packet *packet);
 
 void hfi1_rc_rcv_tid_rdma_write_data(struct hfi1_packet *packet);

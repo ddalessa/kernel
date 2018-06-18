@@ -450,6 +450,7 @@ static void queue_qp_for_tid_wait(struct hfi1_ctxtdata *rcd,
 		qp->s_flags |= HFI1_S_WAIT_TID_SPACE;
 		list_add_tail(&priv->tid_wait, &queue->queue_head);
 		priv->tid_enqueue = ++queue->enqueue;
+		rcd->dd->verbs_dev.n_tidwait++;
 		rvt_get_qp(qp);
 	}
 }
@@ -2193,6 +2194,14 @@ void hfi1_qp_priv_tid_free(struct rvt_dev_info *rdi, struct rvt_qp *qp)
 		kfree(priv->pages);
 		priv->pages = NULL;
 	}
+}
+
+u64 hfi1_access_sw_tid_wait(const struct cntr_entry *entry,
+			    void *context, int vl, int mode, u64 data)
+{
+	struct hfi1_devdata *dd = context;
+
+	return dd->verbs_dev.n_tidwait;
 }
 
 /*
