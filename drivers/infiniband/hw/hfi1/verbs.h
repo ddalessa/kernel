@@ -451,6 +451,8 @@ int hfi1_verbs_send_pio(struct rvt_qp *qp, struct hfi1_pkt_state *ps,
 int hfi1_wss_init(void);
 void hfi1_wss_exit(void);
 
+void hfi1_wait_kmem(struct rvt_qp *qp);
+
 /* platform specific: return the lowest level cache (llc) size, in KiB */
 static inline int wss_llc_size(void)
 {

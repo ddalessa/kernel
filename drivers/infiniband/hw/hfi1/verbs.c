@@ -869,6 +869,24 @@ static void verbs_sdma_complete(
 	hfi1_put_txreq(tx);
 }
 
+void hfi1_wait_kmem(struct rvt_qp *qp)
+{
+	struct hfi1_qp_priv *priv = qp->priv;
+	struct ib_qp *ibqp = &qp->ibqp;
+	struct ib_device *ibdev = ibqp->device;
+	struct hfi1_ibdev *dev = to_idev(ibdev);
+
+	if (list_empty(&priv->s_iowait.list)) {
+		if (list_empty(&dev->memwait))
+			mod_timer(&dev->mem_timer, jiffies + 1);
+		qp->s_flags |= RVT_S_WAIT_KMEM;
+		list_add_tail(&priv->s_iowait.list, &dev->memwait);
+		priv->s_iowait.lock = &dev->iowait_lock;
+		trace_hfi1_qpsleep(qp, RVT_S_WAIT_KMEM);
+		rvt_get_qp(qp);
+	}
+}
+
 static int wait_kmem(struct hfi1_ibdev *dev,
 		     struct rvt_qp *qp,
 		     struct hfi1_pkt_state *ps)
@@ -882,15 +900,7 @@ static int wait_kmem(struct hfi1_ibdev *dev,
 		write_seqlock(&dev->iowait_lock);
 		list_add_tail(&ps->s_txreq->txreq.list,
 			      &priv->s_iowait.tx_head);
-		if (list_empty(&priv->s_iowait.list)) {
-			if (list_empty(&dev->memwait))
-				mod_timer(&dev->mem_timer, jiffies + 1);
-			qp->s_flags |= RVT_S_WAIT_KMEM;
-			list_add_tail(&priv->s_iowait.list, &dev->memwait);
-			priv->s_iowait.lock = &dev->iowait_lock;
-			trace_hfi1_qpsleep(qp, RVT_S_WAIT_KMEM);
-			rvt_get_qp(qp);
-		}
+		hfi1_wait_kmem(qp);
 		write_sequnlock(&dev->iowait_lock);
 		qp->s_flags &= ~RVT_S_BUSY;
 		ret = -EBUSY;
