@@ -174,6 +174,7 @@ struct rvt_swqe {
 	u32 lpsn;               /* last packet sequence number */
 	u32 ssn;                /* send sequence number */
 	u32 length;             /* total length of data in sg_list */
+	void *priv;		/* driver dependent field */
 	struct rvt_sge sg_list[0];
 };
 
@@ -235,6 +236,7 @@ struct rvt_ack_entry {
 	u32 lpsn;
 	u8 opcode;
 	u8 sent;
+	void *priv;
 };
 
 #define	RC_QP_SCALING_INTERVAL	5
@@ -679,7 +681,11 @@ enum hrtimer_restart rvt_rc_rnr_retry(struct hrtimer *t);
 void rvt_add_rnr_timer(struct rvt_qp *qp, u32 aeth);
 void rvt_del_timers_sync(struct rvt_qp *qp);
 void rvt_stop_rc_timers(struct rvt_qp *qp);
-void rvt_add_retry_timer(struct rvt_qp *qp);
+void rvt_add_retry_timer_ext(struct rvt_qp *qp, u8 shift);
+static inline void rvt_add_retry_timer(struct rvt_qp *qp)
+{
+	rvt_add_retry_timer_ext(qp, 0);
+}
 
 /**
  * struct rvt_qp_iter - the iterator for QPs
