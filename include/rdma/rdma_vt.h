@@ -203,7 +203,11 @@ struct rvt_driver_provided {
 	 * check_support() for details.
 	 */
 
-	/* hot path calldowns in a single cacheline */
+	/*
+	 * hot path calldowns in a single cacheline
+	 *
+	 * Add data path calls below
+	 */
 
 	/*
 	 * Give the driver a notice that there is send work to do. It is up to
@@ -215,14 +219,22 @@ struct rvt_driver_provided {
 	bool (*schedule_send)(struct rvt_qp *qp);
 	bool (*schedule_send_no_lock)(struct rvt_qp *qp);
 
-	/* Driver specific work request checking */
-	int (*check_send_wqe)(struct rvt_qp *qp, struct rvt_swqe *wqe);
+	/*
+	 * Driver specific work request setup and checking.
+	 * This function is allowed to perform any setup, checks, or
+	 * adjustments required to the SWQE in order to be usable by
+	 * underlying protocols. This includes private data structure
+	 * allocations.
+	 */
+	int (*setup_wqe)(struct rvt_qp *qp, struct rvt_swqe *wqe);
 
 	/*
 	 * Sometimes rdmavt needs to kick the driver's send progress. That is
 	 * done by this call back.
 	 */
 	void (*do_send)(struct rvt_qp *qp);
+
+	/* end of hot path calldowns */
 
 	/* Passed to ib core registration. Callback to create syfs files */
 	int (*port_callback)(struct ib_device *, u8, struct kobject *);
