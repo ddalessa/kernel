@@ -50,6 +50,36 @@
 #include "verbs.h"
 #include "tid_rdma.h"
 
+#define MAX_EXPECTED_PAGES     (MAX_EXPECTED_BUFFER / PAGE_SIZE)
+
+#define RCV_TID_FLOW_TABLE_CTRL_FLOW_VALID_SMASK BIT_ULL(32)
+#define RCV_TID_FLOW_TABLE_CTRL_HDR_SUPP_EN_SMASK BIT_ULL(33)
+#define RCV_TID_FLOW_TABLE_CTRL_KEEP_AFTER_SEQ_ERR_SMASK BIT_ULL(34)
+#define RCV_TID_FLOW_TABLE_CTRL_KEEP_ON_GEN_ERR_SMASK BIT_ULL(35)
+#define RCV_TID_FLOW_TABLE_STATUS_SEQ_MISMATCH_SMASK BIT_ULL(37)
+#define RCV_TID_FLOW_TABLE_STATUS_GEN_MISMATCH_SMASK BIT_ULL(38)
+
+/*
+ * J_KEY for kernel contexts when TID RDMA is used.
+ * See generate_jkey() in hfi.h for more information.
+ */
+#define TID_RDMA_JKEY                   32
+#define HFI1_KERNEL_MIN_JKEY HFI1_ADMIN_JKEY_RANGE
+#define HFI1_KERNEL_MAX_JKEY (2 * HFI1_ADMIN_JKEY_RANGE - 1)
+
+/* Maximum number of segments in flight per QP request. */
+#define TID_RDMA_MAX_READ_SEGS_PER_REQ  6
+#define TID_RDMA_MAX_WRITE_SEGS_PER_REQ 4
+#define TID_RDMA_MAX_READ_SEGS          6
+
+#define TID_RDMA_DESTQP_FLOW_SHIFT      11
+#define TID_RDMA_DESTQP_FLOW_MASK       0x1f
+
+#define TID_FLOW_SW_PSN BIT(0)
+
+/* Maximum number of packets within a flow generation. */
+#define MAX_TID_FLOW_PSN BIT(HFI1_KDETH_BTH_SEQ_SHIFT)
+
 void hfi1_rc_rcv_tid_rdma_write_req(struct hfi1_packet *packet)
 {
 }
