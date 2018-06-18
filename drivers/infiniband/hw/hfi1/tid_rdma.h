@@ -299,6 +299,17 @@ void hfi1_del_tid_reap_timer(struct rvt_qp *qp);
 void hfi1_add_tid_retry_timer(struct rvt_qp *qp);
 void hfi1_del_tid_retry_timer(struct rvt_qp *qp);
 
+void setup_tid_rdma_wqe(struct rvt_qp *qp, struct rvt_swqe *wqe);
+static inline void hfi1_setup_tid_rdma_wqe(struct rvt_qp *qp,
+					   struct rvt_swqe *wqe)
+{
+	if (wqe->priv &&
+	    (wqe->wr.opcode == IB_WR_RDMA_READ ||
+	     wqe->wr.opcode == IB_WR_RDMA_WRITE) &&
+	    wqe->length >= TID_RDMA_MIN_SEGMENT_SIZE)
+		setup_tid_rdma_wqe(qp, wqe);
+}
+
 bool hfi1_schedule_tid_send(struct rvt_qp *qp);
 
 int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
