@@ -486,6 +486,11 @@ static inline unsigned int rvt_max_atomic(struct rvt_dev_info *rdi)
 	return rdi->dparms.max_rdma_atomic + 1;
 }
 
+static inline unsigned int rvt_size_atomic(struct rvt_dev_info *rdi)
+{
+	return rdi->dparms.max_rdma_atomic;
+}
+
 /*
  * Return the indexed PKEY from the port PKEY table.
  */
