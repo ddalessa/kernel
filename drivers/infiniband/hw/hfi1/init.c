@@ -67,7 +67,7 @@
 #include "aspm.h"
 #include "affinity.h"
 #include "vnic.h"
-#include "exp_rcv.h"
+#include "user_exp_rcv.h"
 
 #undef pr_fmt
 #define pr_fmt(fmt) DRIVER_NAME ": " fmt
@@ -369,6 +369,9 @@ int hfi1_create_ctxtdata(struct hfi1_pportdata *ppd, int numa,
 		rcd->rhf_rcv_function_map = normal_rhf_rcv_functions;
 
 		mutex_init(&rcd->exp_mutex);
+		spin_lock_init(&rcd->exp_lock);
+		INIT_LIST_HEAD(&rcd->flow_queue.queue_head);
+		INIT_LIST_HEAD(&rcd->rarr_queue.queue_head);
 
 		hfi1_cdbg(PROC, "setting up context %u\n", rcd->ctxt);
 
@@ -471,6 +474,9 @@ int hfi1_create_ctxtdata(struct hfi1_pportdata *ppd, int numa,
 						    GFP_KERNEL, numa);
 			if (!rcd->opstats)
 				goto bail;
+
+			/* Initialize TID flow generations for the context */
+			hfi1_kern_init_ctxt_generations(rcd);
 		}
 
 		*context = rcd;
@@ -773,6 +779,8 @@ static void enable_chip(struct hfi1_devdata *dd)
 			rcvmask |= HFI1_RCVCTRL_NO_RHQ_DROP_ENB;
 		if (HFI1_CAP_KGET_MASK(rcd->flags, NODROP_EGR_FULL))
 			rcvmask |= HFI1_RCVCTRL_NO_EGR_DROP_ENB;
+		if (HFI1_CAP_IS_KSET(TID_RDMA))
+			rcvmask |= HFI1_RCVCTRL_TIDFLOW_ENB;
 		hfi1_rcvctrl(dd, rcvmask, rcd);
 		sc_enable(rcd->sc);
 		hfi1_rcd_put(rcd);
@@ -1474,6 +1482,7 @@ static int __init hfi1_mod_init(void)
 	/* sanitize link CRC options */
 	link_crc_mask &= SUPPORTED_CRCS;
 
+	hfi1_compute_tid_rdma_flow_wt();
 	/*
 	 * These must be called before the driver is registered with
 	 * the PCI subsystem.

@@ -53,6 +53,7 @@
 #include "tid_rdma.h"
 #include "user_exp_rcv.h"
 #include "trace.h"
+#include <rdma/ib_umem.h>
 
 /**
  * DOC: TID RDMA READ protocol
@@ -148,6 +149,8 @@ static u32 mask_generation(u32 a)
  * W - max_Write
  * C - Capcode
  */
+
+static u32 tid_rdma_flow_wt;
 
 static struct tid_rdma_flow *find_flow_ib(struct tid_rdma_request *req,
 					  u32 psn, u16 *fidx)
@@ -319,14 +322,161 @@ static void tid_rdma_trigger_resume(struct work_struct *work)
 {
 }
 
+void hfi1_compute_tid_rdma_flow_wt(void)
+{
+	/*
+	 * Heuristic for computing the RNR timeout when waiting on the flow
+	 * queue. Rather than a computationaly expensive exact estimate of when
+	 * a flow will be available, we assume that if a QP is at position N in
+	 * the flow queue it has to wait approximately (N + 1) * (number of
+	 * segments between two sync points), assuming PMTU of 4K. The rationale
+	 * for this is that flows are released and recycled at each sync point.
+	 */
+	tid_rdma_flow_wt = MAX_TID_FLOW_PSN * enum_to_mtu(OPA_MTU_4096) /
+		TID_RDMA_MAX_SEGMENT_SIZE;
+}
+
+/**
+ * kern_reserve_flow - allocate a hardware flow
+ * @rcd - the context to use for allocation
+ * @last - the index of the preferred flow. Use RXE_NUM_TID_FLOWS to
+ *         signify "don't care".
+ *
+ * Use a bit mask based allocation to reserve a hardware
+ * flow for use in receiving KDETH data packets. If a preferred flow is
+ * specified the function will attempt to reserve that flow again, if
+ * available.
+ *
+ * The exp_lock must be held.
+ *
+ * Return:
+ * On success: a value postive value between 0 and RXE_NUM_TID_FLOWS - 1
+ * On failure: -EAGAIN
+ */
+static int kern_reserve_flow(struct hfi1_ctxtdata *rcd, int last)
+	__must_hold(&rcd->exp_lock)
+{
+	int nr;
+
+	/* Attempt to reserve the preferred flow index */
+	if (last >= 0 && last < RXE_NUM_TID_FLOWS &&
+	    !test_and_set_bit(last, &rcd->flow_mask))
+		return last;
+
+	nr = ffz(rcd->flow_mask);
+	BUILD_BUG_ON(RXE_NUM_TID_FLOWS >=
+		     (sizeof(rcd->flow_mask) * BITS_PER_BYTE));
+	if (nr > (RXE_NUM_TID_FLOWS - 1))
+		return -EAGAIN;
+	set_bit(nr, &rcd->flow_mask);
+	return nr;
+}
+
+static void kern_set_hw_flow(struct hfi1_ctxtdata *rcd, u32 generation,
+			     u32 flow_idx)
+{
+	u64 reg;
+
+	reg = ((u64)generation << HFI1_KDETH_BTH_SEQ_SHIFT) |
+		RCV_TID_FLOW_TABLE_CTRL_FLOW_VALID_SMASK |
+		RCV_TID_FLOW_TABLE_CTRL_KEEP_AFTER_SEQ_ERR_SMASK |
+		RCV_TID_FLOW_TABLE_CTRL_KEEP_ON_GEN_ERR_SMASK |
+		RCV_TID_FLOW_TABLE_STATUS_SEQ_MISMATCH_SMASK |
+		RCV_TID_FLOW_TABLE_STATUS_GEN_MISMATCH_SMASK;
+
+	if (generation != KERN_GENERATION_RESERVED)
+		reg |= RCV_TID_FLOW_TABLE_CTRL_HDR_SUPP_EN_SMASK;
+
+	write_uctxt_csr(rcd->dd, rcd->ctxt,
+			RCV_TID_FLOW_TABLE + 8 * flow_idx, reg);
+}
+
+static u32 kern_setup_hw_flow(struct hfi1_ctxtdata *rcd, u32 flow_idx)
+	__must_hold(&rcd->exp_lock)
+{
+	u32 generation = rcd->flows[flow_idx].generation;
+
+	kern_set_hw_flow(rcd, generation, flow_idx);
+	return generation;
+}
+
+static u32 kern_flow_generation_next(u32 gen)
+{
+	u32 generation = mask_generation(gen + 1);
+
+	if (generation == KERN_GENERATION_RESERVED)
+		generation = mask_generation(generation + 1);
+	return generation;
+}
+
+static void kern_clear_hw_flow(struct hfi1_ctxtdata *rcd, u32 flow_idx)
+	__must_hold(&rcd->exp_lock)
+{
+	rcd->flows[flow_idx].generation =
+		kern_flow_generation_next(rcd->flows[flow_idx].generation);
+	kern_set_hw_flow(rcd, KERN_GENERATION_RESERVED, flow_idx);
+}
+
 static int hfi1_kern_setup_hw_flow(struct hfi1_ctxtdata *rcd,
 				   struct rvt_qp *qp)
 {
+	struct hfi1_qp_priv *qpriv = (struct hfi1_qp_priv *)qp->priv;
+	struct tid_flow_state *fs = &qpriv->flow_state;
+	unsigned long flags;
+	int ret = 0;
+
+	/* The QP already has an allocated flow */
+	if (fs->index != RXE_NUM_TID_FLOWS)
+		return ret;
+
+	spin_lock_irqsave(&rcd->exp_lock, flags);
+
+	ret = kern_reserve_flow(rcd, fs->last_index);
+	if (ret < 0)
+		goto queue;
+	fs->index = ret;
+	fs->last_index = fs->index;
+
+	/* Generation received in a RESYNC overrides default flow generation */
+	if (fs->generation != KERN_GENERATION_RESERVED)
+		rcd->flows[fs->index].generation = fs->generation;
+	fs->generation = kern_setup_hw_flow(rcd, fs->index);
+	fs->psn = 0;
+	fs->flags = 0;
+	spin_unlock_irqrestore(&rcd->exp_lock, flags);
+
 	return 0;
+queue:
+	spin_unlock_irqrestore(&rcd->exp_lock, flags);
+	return -EAGAIN;
 }
 
 void hfi1_kern_clear_hw_flow(struct hfi1_ctxtdata *rcd, struct rvt_qp *qp)
 {
+	struct hfi1_qp_priv *qpriv = (struct hfi1_qp_priv *)qp->priv;
+	struct tid_flow_state *fs = &qpriv->flow_state;
+	unsigned long flags;
+
+	if (fs->index >= RXE_NUM_TID_FLOWS)
+		return;
+	spin_lock_irqsave(&rcd->exp_lock, flags);
+	kern_clear_hw_flow(rcd, fs->index);
+	clear_bit(fs->index, &rcd->flow_mask);
+	fs->index = RXE_NUM_TID_FLOWS;
+	fs->psn = 0;
+	fs->generation = KERN_GENERATION_RESERVED;
+
+	spin_unlock_irqrestore(&rcd->exp_lock, flags);
+}
+
+void hfi1_kern_init_ctxt_generations(struct hfi1_ctxtdata *rcd)
+{
+	int i;
+
+	for (i = 0; i < RXE_NUM_TID_FLOWS; i++) {
+		rcd->flows[i].generation = mask_generation(prandom_u32());
+		kern_set_hw_flow(rcd, KERN_GENERATION_RESERVED, i);
+	}
 }
 
 static int hfi1_kern_exp_rcv_setup(struct tid_rdma_request *req,
@@ -344,6 +494,71 @@ int hfi1_kern_exp_rcv_clear(struct tid_rdma_request *req)
 void hfi1_kern_exp_rcv_clear_all(struct tid_rdma_request *req)
 	__must_hold(&req->qp->s_lock)
 {
+}
+
+static void hfi1_kern_exp_rcv_dealloc(struct tid_rdma_flow *flow)
+{
+	kfree(flow->fstate);
+	flow->fstate = NULL;
+}
+
+static int hfi1_kern_exp_rcv_alloc(struct tid_rdma_flow *flow)
+{
+	flow->fstate = kzalloc(sizeof(*flow->fstate), GFP_ATOMIC);
+	if (!flow->fstate)
+		goto nomem;
+
+	return 0;
+nomem:
+	hfi1_kern_exp_rcv_dealloc(flow);
+	return -ENOMEM;
+}
+
+/* Called at QP destroy time to free TID RDMA resources */
+static void hfi1_kern_exp_rcv_free_flows(struct tid_rdma_request *req)
+{
+	int i;
+
+	for (i = 0; req->flows && i < req->n_max_flows; i++)
+		hfi1_kern_exp_rcv_dealloc(&req->flows[i]);
+
+	kfree(req->flows);
+	req->flows = NULL;
+	req->n_max_flows = 0;
+	req->n_flows = 0;
+}
+
+/*
+ * This is called at QP create time to allocate resources for TID RDMA
+ * segments/flows. This is done to keep all required memory pre-allocated and
+ * avoid memory allocation in the data path.
+ */
+static int hfi1_kern_exp_rcv_alloc_flows(struct tid_rdma_request *req)
+{
+	struct tid_rdma_flow *flows;
+	int i, ret;
+	u16 nflows;
+
+	/* Size of the flow circular buffer is the next higher power of 2 */
+	nflows = max_t(u16, TID_RDMA_MAX_READ_SEGS_PER_REQ,
+		       TID_RDMA_MAX_WRITE_SEGS_PER_REQ);
+	req->n_max_flows = roundup_pow_of_two(nflows + 1);
+	flows = kcalloc(req->n_max_flows, sizeof(*flows), GFP_KERNEL);
+	if (!flows) {
+		ret = -ENOMEM;
+		goto err;
+	}
+	req->flows = flows;
+
+	for (i = 0; i < req->n_max_flows; i++) {
+		ret = hfi1_kern_exp_rcv_alloc(&req->flows[i]);
+		if (ret)
+			goto err;
+	}
+	return 0;
+err:
+	hfi1_kern_exp_rcv_free_flows(req);
+	return ret;
 }
 
 /*
@@ -884,9 +1099,14 @@ int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 		      struct ib_qp_init_attr *init_attr)
 {
 	struct hfi1_qp_priv *qpriv = qp->priv;
-	int i;
+	int i, ret;
 
+	BUILD_BUG_ON(TID_RDMA_MAX_SEGMENT_SIZE / PAGE_SIZE > U8_MAX);
 	qpriv->rcd = qp_to_rcd(rdi, qp);
+	qpriv->flow_state.psn = 0;
+	qpriv->flow_state.index = RXE_NUM_TID_FLOWS;
+	qpriv->flow_state.last_index = RXE_NUM_TID_FLOWS;
+	qpriv->flow_state.generation = KERN_GENERATION_RESERVED;
 
 	spin_lock_init(&qpriv->opfn.lock);
 	INIT_WORK(&qpriv->opfn.opfn_work, opfn_send_conn_request);
@@ -912,6 +1132,12 @@ int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 			if (!priv)
 				return -ENOMEM;
 
+			ret = hfi1_kern_exp_rcv_alloc_flows(&priv->tid_req);
+			if (ret) {
+				kfree(priv);
+				return ret;
+			}
+
 			/*
 			 * Initialize various TID RDMA request variables.
 			 * These variables are "static", which is why they
@@ -933,6 +1159,12 @@ int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 			priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 			if (!priv)
 				return -ENOMEM;
+
+			ret = hfi1_kern_exp_rcv_alloc_flows(&priv->tid_req);
+			if (ret) {
+				kfree(priv);
+				return ret;
+			}
 
 			priv->tid_req.qp = qp;
 			priv->tid_req.rcd = qpriv->rcd;
@@ -956,12 +1188,16 @@ void hfi1_qp_priv_tid_free(struct rvt_dev_info *rdi, struct rvt_qp *qp)
 
 			wqe = rvt_get_swqe_ptr(qp, i);
 			priv = wqe->priv;
+			if (priv)
+				hfi1_kern_exp_rcv_free_flows(&priv->tid_req);
 			kfree(priv);
 			wqe->priv = NULL;
 		}
 		for (i = 0; i < rvt_max_atomic(rdi); i++) {
 			struct hfi1_ack_priv *priv = qp->s_ack_queue[i].priv;
 
+			if (priv)
+				hfi1_kern_exp_rcv_free_flows(&priv->tid_req);
 			kfree(priv);
 			qp->s_ack_queue[i].priv = NULL;
 		}
