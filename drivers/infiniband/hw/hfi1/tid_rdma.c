@@ -213,6 +213,13 @@ __find_flow_ranged(struct tid_rdma_request *req, u16 head, u16 tail,
 	return NULL;
 }
 
+static struct tid_rdma_flow *find_flow(struct tid_rdma_request *req,
+				       u32 psn, u16 *fidx)
+{
+	return __find_flow_ranged(req, req->setup_head, req->clear_tail, psn,
+				  fidx);
+}
+
 static u8 trdma_pset_order(struct tid_rdma_pageset *s)
 {
 	u8 count = s->count;
@@ -3412,13 +3419,480 @@ find_prev_entry_kdeth(struct rvt_qp *qp, u32 psn, u8 *prev, u8 *prev_ack,
 void hfi1_kern_read_tid_flow_free(struct rvt_qp *qp)
 	__must_hold(&qp->s_lock)
 {
+	u32 n = qp->s_acked;
+	struct rvt_swqe *wqe;
+	struct tid_rdma_request *req;
+	struct hfi1_qp_priv *priv = qp->priv;
+
+	lockdep_assert_held(&qp->s_lock);
+	/* Free any TID entries */
+	while (n != qp->s_tail) {
+		wqe = rvt_get_swqe_ptr(qp, n);
+		if (wqe->wr.opcode == IB_WR_TID_RDMA_READ) {
+			req = wqe_to_tid_req(wqe);
+			hfi1_kern_exp_rcv_clear_all(req);
+		}
+
+		if (++n == qp->s_size)
+			n = 0;
+	}
+	/* Free flow */
+	hfi1_kern_clear_hw_flow(priv->rcd, qp);
+}
+
+static bool tid_rdma_tid_err(struct hfi1_ctxtdata *rcd,
+			     struct hfi1_packet *packet, u8 rcv_type,
+			     u8 opcode)
+{
+	struct rvt_qp *qp = packet->qp;
+	u32 ipsn;
+	struct ib_other_headers *ohdr = packet->ohdr;
+
+	if (rcv_type >= RHF_RCV_TYPE_IB)
+		goto done;
+
+	spin_lock(&qp->s_lock);
+
+	/*
+	 * We've ran out of space in the eager buffer.
+	 * Eagerly received KDETH packets which require space in the
+	 * Eager buffer (packet that have payload) are TID RDMA WRITE
+	 * response packets. In this case, we have to re-transmit the
+	 * TID RDMA WRITE request.
+	 */
+	if (rcv_type == RHF_RCV_TYPE_EAGER) {
+		hfi1_restart_rc(qp, qp->s_last_psn + 1, 1);
+		hfi1_schedule_send(qp);
+		goto done_unlock;
+	}
+
+	/*
+	 * For TID READ response, error out QP after freeing the tid
+	 * resources.
+	 */
+	if (opcode == TID_OP(READ_RESP)) {
+		ipsn = mask_psn(be32_to_cpu(ohdr->u.tid_rdma.r_rsp.verbs_psn));
+		if (cmp_psn(ipsn, qp->s_last_psn) > 0 &&
+		    cmp_psn(ipsn, qp->s_psn) < 0) {
+			hfi1_kern_read_tid_flow_free(qp);
+			spin_unlock(&qp->s_lock);
+			rvt_rc_error(qp, IB_WC_LOC_QP_OP_ERR);
+			goto done;
+		}
+	}
+
+done_unlock:
+	spin_unlock(&qp->s_lock);
+done:
+	return true;
+}
+
+static void restart_tid_rdma_read_req(struct hfi1_ctxtdata *rcd,
+				      struct rvt_qp *qp, struct rvt_swqe *wqe)
+{
+	struct tid_rdma_request *req;
+	struct tid_rdma_flow *flow;
+
+	/* Start from the right segment */
+	qp->r_flags |= RVT_R_RDMAR_SEQ;
+	req = wqe_to_tid_req(wqe);
+	flow = &req->flows[req->clear_tail];
+	hfi1_restart_rc(qp, flow->flow_state.ib_spsn, 0);
+	if (list_empty(&qp->rspwait)) {
+		qp->r_flags |= RVT_R_RSP_SEND;
+		rvt_get_qp(qp);
+		list_add_tail(&qp->rspwait, &rcd->qp_wait_list);
+	}
+}
+
+/*
+ * Handle the KDETH eflags for TID RDMA READ response.
+ *
+ * Return true if the last packet for a segment has been received and it is
+ * time to process the response normally; otherwise, return true.
+ */
+static bool handle_read_kdeth_eflags(struct hfi1_ctxtdata *rcd,
+				     struct hfi1_packet *packet, u8 rcv_type,
+				     u8 rte, u32 psn, u32 ibpsn)
+{
+	struct hfi1_pportdata *ppd = rcd->ppd;
+	struct hfi1_devdata *dd = ppd->dd;
+	struct hfi1_ibport *ibp;
+	struct rvt_swqe *wqe;
+	struct tid_rdma_request *req;
+	struct tid_rdma_flow *flow;
+	u32 ack_psn;
+	struct rvt_qp *qp = packet->qp;
+	struct hfi1_qp_priv *priv = qp->priv;
+	bool ret = true;
+	int diff = 0;
+	u32 fpsn;
+
+	/* If the psn is out of valid range, drop the packet */
+	if (cmp_psn(ibpsn, qp->s_last_psn) < 0 ||
+	    cmp_psn(ibpsn, qp->s_psn) > 0)
+		return ret;
+
+	spin_lock(&qp->s_lock);
+	/*
+	 * Note that NAKs implicitly ACK outstanding SEND and RDMA write
+	 * requests and implicitly NAK RDMA read and atomic requests issued
+	 * before the NAK'ed request.
+	 */
+	ack_psn = ibpsn - 1;
+	wqe = rvt_get_swqe_ptr(qp, qp->s_acked);
+	ibp = to_iport(qp->ibqp.device, qp->port_num);
+
+	/* Complete WQEs that the PSN finishes. */
+	while ((int)delta_psn(ack_psn, wqe->lpsn) >= 0) {
+		/*
+		 * If this request is a RDMA read or atomic, and the NACK is
+		 * for a later operation, this NACK NAKs the RDMA read or
+		 * atomic.
+		 */
+		if (wqe->wr.opcode == IB_WR_RDMA_READ ||
+		    wqe->wr.opcode == IB_WR_TID_RDMA_READ ||
+		    wqe->wr.opcode == IB_WR_ATOMIC_CMP_AND_SWP ||
+		    wqe->wr.opcode == IB_WR_ATOMIC_FETCH_AND_ADD) {
+			/* Retry this request. */
+			if (!(qp->r_flags & RVT_R_RDMAR_SEQ)) {
+				qp->r_flags |= RVT_R_RDMAR_SEQ;
+				if (wqe->wr.opcode == IB_WR_TID_RDMA_READ) {
+					restart_tid_rdma_read_req(rcd, qp,
+								  wqe);
+				} else {
+					hfi1_restart_rc(qp, qp->s_last_psn + 1,
+							0);
+					if (list_empty(&qp->rspwait)) {
+						qp->r_flags |= RVT_R_RSP_SEND;
+						rvt_get_qp(qp);
+						list_add_tail(/* wait */
+						   &qp->rspwait,
+						   &rcd->qp_wait_list);
+					}
+				}
+			}
+			/*
+			 * No need to process the NAK since we are
+			 * restarting an earlier request.
+			 */
+			break;
+		}
+
+		wqe = do_rc_completion(qp, wqe, ibp);
+		if (qp->s_acked == qp->s_tail)
+			break;
+	}
+
+	/* Handle the eflags for the request */
+	if (wqe->wr.opcode != IB_WR_TID_RDMA_READ)
+		goto s_unlock;
+
+	req = wqe_to_tid_req(wqe);
+	switch (rcv_type) {
+	case RHF_RCV_TYPE_EXPECTED:
+		switch (rte) {
+		case RHF_RTE_EXPECTED_FLOW_SEQ_ERR:
+			/*
+			 * On the first occurrence of a Flow Sequence error,
+			 * the flag TID_FLOW_SW_PSN is set.
+			 *
+			 * After that, the flow is *not* reprogrammed and the
+			 * protocol falls back to SW PSN checking. This is done
+			 * to prevent continuous Flow Sequence errors for any
+			 * packets that could be still in the fabric.
+			 */
+			flow = find_flow(req, psn, NULL);
+			if (!flow) {
+				/*
+				 * We can't find the IB PSN matching the
+				 * received KDETH PSN. The only thing we can
+				 * do at this point is report the error to
+				 * the QP.
+				 */
+				hfi1_kern_read_tid_flow_free(qp);
+				spin_unlock(&qp->s_lock);
+				rvt_rc_error(qp, IB_WC_LOC_QP_OP_ERR);
+				return ret;
+			}
+			if (priv->flow_state.flags & TID_FLOW_SW_PSN) {
+				diff = cmp_psn(psn,
+					       priv->flow_state.r_next_psn);
+				if (diff > 0) {
+					if (!(qp->r_flags & RVT_R_RDMAR_SEQ))
+						restart_tid_rdma_read_req(rcd,
+									  qp,
+									  wqe);
+
+					/* Drop the packet.*/
+					goto s_unlock;
+				} else if (diff < 0) {
+					/*
+					 * If a response packet for a restarted
+					 * request has come back, reset the
+					 * restart flag.
+					 */
+					if (qp->r_flags & RVT_R_RDMAR_SEQ)
+						qp->r_flags &=
+							~RVT_R_RDMAR_SEQ;
+
+					/* Drop the packet.*/
+					goto s_unlock;
+				}
+
+				/*
+				 * If SW PSN verification is successful and
+				 * this is the last packet in the segment, tell
+				 * the caller to process it as a normal packet.
+				 */
+				fpsn = full_flow_psn(flow,
+						     flow->flow_state.lpsn);
+				if (cmp_psn(fpsn, psn) == 0) {
+					ret = false;
+					if (qp->r_flags & RVT_R_RDMAR_SEQ)
+						qp->r_flags &=
+							~RVT_R_RDMAR_SEQ;
+				}
+				priv->flow_state.r_next_psn++;
+			} else {
+				u64 reg;
+				u32 last_psn;
+
+				/*
+				 * The only sane way to get the amount of
+				 * progress is to read the HW flow state.
+				 */
+				reg = read_uctxt_csr(dd, rcd->ctxt,
+						     RCV_TID_FLOW_TABLE +
+						     (8 * flow->idx));
+				last_psn = mask_psn(reg);
+
+				priv->flow_state.r_next_psn = last_psn;
+				priv->flow_state.flags |= TID_FLOW_SW_PSN;
+				/*
+				 * If no request has been restarted yet,
+				 * restart the current one.
+				 */
+				if (!(qp->r_flags & RVT_R_RDMAR_SEQ))
+					restart_tid_rdma_read_req(rcd, qp,
+								  wqe);
+			}
+
+			break;
+
+		case RHF_RTE_EXPECTED_FLOW_GEN_ERR:
+			/*
+			 * Since the TID flow is able to ride through
+			 * generation mismatch, drop this stale packet.
+			 */
+			break;
+
+		default:
+			break;
+		}
+		break;
+
+	case RHF_RCV_TYPE_ERROR:
+		switch (rte) {
+		case RHF_RTE_ERROR_OP_CODE_ERR:
+		case RHF_RTE_ERROR_KHDR_MIN_LEN_ERR:
+		case RHF_RTE_ERROR_KHDR_HCRC_ERR:
+		case RHF_RTE_ERROR_KHDR_KVER_ERR:
+		case RHF_RTE_ERROR_CONTEXT_ERR:
+		case RHF_RTE_ERROR_KHDR_TID_ERR:
+		default:
+			break;
+		}
+	default:
+		break;
+	}
+s_unlock:
+	spin_unlock(&qp->s_lock);
+	return ret;
 }
 
 bool hfi1_handle_kdeth_eflags(struct hfi1_ctxtdata *rcd,
 			      struct hfi1_pportdata *ppd,
 			      struct hfi1_packet *packet)
 {
-	return true;
+	struct hfi1_ibport *ibp = &ppd->ibport_data;
+	struct hfi1_devdata *dd = ppd->dd;
+	struct rvt_dev_info *rdi = &dd->verbs_dev.rdi;
+	u8 rcv_type = rhf_rcv_type(packet->rhf);
+	u8 rte = rhf_rcv_type_err(packet->rhf);
+	struct ib_header *hdr = packet->hdr;
+	struct ib_other_headers *ohdr = NULL;
+	struct rvt_ack_entry *e;
+	struct tid_rdma_request *req;
+	struct tid_rdma_flow *flow;
+	int lnh = be16_to_cpu(hdr->lrh[0]) & 3;
+	u16 lid  = be16_to_cpu(hdr->lrh[1]);
+	u8 opcode;
+	u32 qp_num, psn, ibpsn;
+	struct rvt_qp *qp;
+	struct hfi1_qp_priv *qpriv;
+	unsigned long flags;
+	bool ret = true;
+
+	if (packet->rhf & (RHF_VCRC_ERR | RHF_ICRC_ERR))
+		return ret;
+
+	packet->ohdr = &hdr->u.oth;
+	ohdr = packet->ohdr;
+	trace_input_ibhdr(rcd->dd, packet, !!(rhf_dc_info(packet->rhf)));
+
+	/* Get the destination QP number. */
+	qp_num = be32_to_cpu(ohdr->u.tid_rdma.w_data.verbs_qp) &
+		RVT_QPN_MASK;
+	if (lid >= be16_to_cpu(IB_MULTICAST_LID_BASE))
+		goto drop;
+
+	psn = mask_psn(be32_to_cpu(ohdr->bth[2]));
+	opcode = (be32_to_cpu(ohdr->bth[0]) >> 24) & 0xff;
+
+	rcu_read_lock();
+	qp = rvt_lookup_qpn(rdi, &ibp->rvp, qp_num);
+	if (!qp)
+		goto rcu_unlock;
+
+	packet->qp = qp;
+
+	/* Check for valid receive state. */
+	spin_lock_irqsave(&qp->r_lock, flags);
+	if (!(ib_rvt_state_ops[qp->state] & RVT_PROCESS_RECV_OK)) {
+		ibp->rvp.n_pkt_drops++;
+		goto r_unlock;
+	}
+
+	if (packet->rhf & RHF_TID_ERR) {
+		/* For TIDERR and RC QPs preemptively schedule a NAK */
+		u32 tlen = rhf_pkt_len(packet->rhf); /* in bytes */
+
+		/* Sanity check packet */
+		if (tlen < 24)
+			goto r_unlock;
+
+		/*
+		 * Check for GRH. We should never get packets with GRH in this
+		 * path.
+		 */
+		if (lnh == HFI1_LRH_GRH)
+			goto r_unlock;
+
+		if (tid_rdma_tid_err(rcd, packet, rcv_type, opcode))
+			goto r_unlock;
+	}
+
+	/* handle TID RDMA READ */
+	if (opcode == TID_OP(READ_RESP)) {
+		ibpsn = be32_to_cpu(ohdr->u.tid_rdma.r_rsp.verbs_psn);
+		ibpsn = mask_psn(ibpsn);
+		ret = handle_read_kdeth_eflags(rcd, packet, rcv_type, rte, psn,
+					       ibpsn);
+		goto r_unlock;
+	}
+
+	/*
+	 * qp->s_tail_ack_queue points to the rvt_ack_entry currently being
+	 * processed. These a completed sequentially so we can be sure that
+	 * the pointer will not change until the entire request has completed.
+	 */
+	spin_lock(&qp->s_lock);
+	qpriv = qp->priv;
+	e = &qp->s_ack_queue[qpriv->r_tid_tail];
+	req = ack_to_tid_req(e);
+	flow = &req->flows[req->clear_tail];
+
+	switch (rcv_type) {
+	case RHF_RCV_TYPE_EXPECTED:
+		switch (rte) {
+		case RHF_RTE_EXPECTED_FLOW_SEQ_ERR:
+			if (!(qpriv->s_flags & HFI1_R_TID_SW_PSN)) {
+				u64 reg;
+
+				qpriv->s_flags |= HFI1_R_TID_SW_PSN;
+				/*
+				 * The only sane way to get the amount of
+				 * progress is to read the HW flow state.
+				 */
+				reg = read_uctxt_csr(dd, rcd->ctxt,
+						     RCV_TID_FLOW_TABLE +
+						     (8 * flow->idx));
+				flow->flow_state.r_next_psn = mask_psn(reg);
+				qpriv->r_next_psn_kdeth =
+					flow->flow_state.r_next_psn;
+				goto nak_psn;
+			} else {
+				/*
+				 * If the received PSN does not match the next
+				 * expected PSN, NAK the packet.
+				 * However, only do that if we know that the a
+				 * NAK has already been sent. Otherwise, this
+				 * mismatch could be due to packets that were
+				 * already in flight.
+				 */
+				if (psn != flow->flow_state.r_next_psn) {
+					psn = flow->flow_state.r_next_psn;
+					goto nak_psn;
+				}
+
+				qpriv->s_nak_state = 0;
+				/*
+				 * If SW PSN verification is successful and this
+				 * is the last packet in the segment, tell the
+				 * caller to process it as a normal packet.
+				 */
+				if (psn == full_flow_psn(flow,
+							 flow->flow_state.lpsn))
+					ret = false;
+				qpriv->r_next_psn_kdeth =
+					++flow->flow_state.r_next_psn;
+			}
+			break;
+
+		case RHF_RTE_EXPECTED_FLOW_GEN_ERR:
+			goto nak_psn;
+
+		default:
+			break;
+		}
+		break;
+
+	case RHF_RCV_TYPE_ERROR:
+		switch (rte) {
+		case RHF_RTE_ERROR_OP_CODE_ERR:
+		case RHF_RTE_ERROR_KHDR_MIN_LEN_ERR:
+		case RHF_RTE_ERROR_KHDR_HCRC_ERR:
+		case RHF_RTE_ERROR_KHDR_KVER_ERR:
+		case RHF_RTE_ERROR_CONTEXT_ERR:
+		case RHF_RTE_ERROR_KHDR_TID_ERR:
+		default:
+			break;
+		}
+	default:
+		break;
+	}
+
+unlock:
+	spin_unlock(&qp->s_lock);
+r_unlock:
+	spin_unlock_irqrestore(&qp->r_lock, flags);
+rcu_unlock:
+	rcu_read_unlock();
+drop:
+	return ret;
+nak_psn:
+	ibp->rvp.n_rc_seqnak++;
+	if (!qpriv->s_nak_state) {
+		qpriv->s_nak_state = IB_NAK_PSN_ERROR;
+		/* We are NAK'ing the next expected PSN */
+		qpriv->s_nak_psn = mask_psn(flow->flow_state.r_next_psn);
+		qpriv->s_flags |= RVT_S_ACK_PENDING;
+		if (qpriv->r_tid_ack == HFI1_QP_WQE_INVALID)
+			qpriv->r_tid_ack = qpriv->r_tid_tail;
+		hfi1_schedule_tid_send(qp);
+	}
+	goto unlock;
 }
 
 static void hfi1_tid_retry_timeout(struct timer_list *t)
