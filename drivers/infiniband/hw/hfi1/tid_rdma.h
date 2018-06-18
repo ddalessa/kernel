@@ -248,6 +248,11 @@ struct trdma_flow_state {
 	u32 tid_entry[TID_RDMA_MAX_PAGES];
 };
 
+bool tid_rdma_conn_req(struct rvt_qp *qp, u64 *data);
+bool tid_rdma_conn_reply(struct rvt_qp *qp, u64 data);
+bool tid_rdma_conn_resp(struct rvt_qp *qp, u64 *data);
+void tid_rdma_conn_error(struct rvt_qp *qp);
+
 void hfi1_kern_init_ctxt_generations(struct hfi1_ctxtdata *rcd);
 void tid_rdma_flush_wait(struct rvt_qp *qp);
 
@@ -268,5 +273,8 @@ void hfi1_rc_rcv_tid_rdma_read_resp(struct hfi1_packet *packet);
 
 int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 		      struct ib_qp_init_attr *init_attr);
+void hfi1_qp_priv_tid_free(struct rvt_dev_info *rdi, struct rvt_qp *qp);
+
+void tid_rdma_opfn_init(struct rvt_qp *qp, struct tid_rdma_params *p);
 
 #endif /* HFI1_TID_RDMA_H */
