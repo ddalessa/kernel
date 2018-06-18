@@ -1,5 +1,6 @@
+/* SPDX-License-Identifier: (GPL-2.0 OR BSD-3-Clause) */
 /*
- * Copyright(c) 2016 - 2018 Intel Corporation.
+ * Copyright(c) 2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -44,81 +45,52 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
+#if !defined(__HFI1_TRACE_IOWAIT_H) || defined(TRACE_HEADER_MULTI_READ)
+#define __HFI1_TRACE_IOWAIT_H
 
-#ifndef HFI1_VERBS_TXREQ_H
-#define HFI1_VERBS_TXREQ_H
-
-#include <linux/types.h>
-#include <linux/slab.h>
-
-#include "verbs.h"
-#include "sdma_txreq.h"
+#include <linux/tracepoint.h>
 #include "iowait.h"
+#include "verbs.h"
 
-struct verbs_txreq {
-	struct hfi1_sdma_header	phdr;
-	struct sdma_txreq       txreq;
-	struct rvt_qp           *qp;
-	struct rvt_swqe         *wqe;
-	struct rvt_mregion	*mr;
-	struct rvt_sge_state    *ss;
-	struct sdma_engine     *sde;
-	struct send_context     *psc;
-	u16                     hdr_dwords;
-	u16			s_cur_size;
-};
+#undef TRACE_SYSTEM
+#define TRACE_SYSTEM hfi1_iowait
 
-struct hfi1_ibdev;
-struct verbs_txreq *__get_txreq(struct hfi1_ibdev *dev,
-				struct rvt_qp *qp);
+DECLARE_EVENT_CLASS(hfi1_iowait_template,
+		    TP_PROTO(struct iowait *wait, u32 flag),
+		    TP_ARGS(wait, flag),
+		    TP_STRUCT__entry(/* entry */
+			    __field(unsigned long, addr)
+			    __field(unsigned long, flags)
+			    __field(u32, flag)
+			    __field(u32, qpn)
+			    ),
+		    TP_fast_assign(/* assign */
+			    __entry->addr = (unsigned long)wait;
+			    __entry->flags = wait->flags;
+			    __entry->flag = (1 << flag);
+			    __entry->qpn = iowait_to_qp(wait)->ibqp.qp_num;
+			    ),
+		    TP_printk(/* print */
+			    "iowait 0x%lx qp %u flags 0x%lx flag 0x%x",
+			    __entry->addr,
+			    __entry->qpn,
+			    __entry->flags,
+			    __entry->flag
+			    )
+	);
 
-static inline struct verbs_txreq *get_txreq(struct hfi1_ibdev *dev,
-					    struct rvt_qp *qp)
-	__must_hold(&qp->slock)
-{
-	struct verbs_txreq *tx;
-	struct hfi1_qp_priv *priv = qp->priv;
+DEFINE_EVENT(hfi1_iowait_template, hfi1_iowait_set,
+	     TP_PROTO(struct iowait *wait, u32 flag),
+	     TP_ARGS(wait, flag));
 
-	tx = kmem_cache_alloc(dev->verbs_txreq_cache, GFP_ATOMIC);
-	if (unlikely(!tx)) {
-		/* call slow path to get the lock */
-		tx = __get_txreq(dev, qp);
-		if (!tx)
-			return tx;
-	}
-	tx->qp = qp;
-	tx->mr = NULL;
-	tx->sde = priv->s_sde;
-	tx->psc = priv->s_sendcontext;
-	/* so that we can test if the sdma decriptors are there */
-	tx->txreq.num_desc = 0;
-	/* Set the header type */
-	tx->phdr.hdr.hdr_type = priv->hdr_type;
-	return tx;
-}
+DEFINE_EVENT(hfi1_iowait_template, hfi1_iowait_clear,
+	     TP_PROTO(struct iowait *wait, u32 flag),
+	     TP_ARGS(wait, flag));
 
-static inline struct sdma_txreq *get_sdma_txreq(struct verbs_txreq *tx)
-{
-	return &tx->txreq;
-}
+#endif /* __HFI1_TRACE_IOWAIT_H */
 
-static inline struct verbs_txreq *get_waiting_verbs_txreq(struct iowait_work *w)
-{
-	struct sdma_txreq *stx;
-
-	stx = iowait_get_txhead(w);
-	if (stx)
-		return container_of(stx, struct verbs_txreq, txreq);
-	return NULL;
-}
-
-static inline bool verbs_txreq_queued(struct iowait_work *w)
-{
-	return iowait_packet_queued(w);
-}
-
-void hfi1_put_txreq(struct verbs_txreq *tx);
-int verbs_txreq_init(struct hfi1_ibdev *dev);
-void verbs_txreq_exit(struct hfi1_ibdev *dev);
-
-#endif                         /* HFI1_VERBS_TXREQ_H */
+#undef TRACE_INCLUDE_PATH
+#undef TRACE_INCLUDE_FILE
+#define TRACE_INCLUDE_PATH .
+#define TRACE_INCLUDE_FILE trace_iowait
+#include <trace/define_trace.h>
