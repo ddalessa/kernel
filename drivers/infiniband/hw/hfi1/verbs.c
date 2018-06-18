@@ -2113,6 +2113,7 @@ int hfi1_register_ib_device(struct hfi1_devdata *dd)
 	dd->verbs_dev.rdi.dparms.nports = dd->num_pports;
 	dd->verbs_dev.rdi.dparms.npkeys = hfi1_get_npkeys(dd);
 	dd->verbs_dev.rdi.dparms.reserved_operations = 1;
+	dd->verbs_dev.rdi.dparms.extra_rdma_atomic = HFI1_TID_RDMA_WRITE_CNT;
 
 	/* post send table */
 	dd->verbs_dev.rdi.post_parms = hfi1_post_parms;
