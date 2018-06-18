@@ -59,4 +59,7 @@ void hfi1_rc_rcv_tid_rdma_read_req(struct hfi1_packet *packet);
 
 void hfi1_rc_rcv_tid_rdma_read_resp(struct hfi1_packet *packet);
 
+int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
+		      struct ib_qp_init_attr *init_attr);
+
 #endif /* HFI1_TID_RDMA_H */
