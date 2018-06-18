@@ -4009,6 +4009,88 @@ static void hfi1_tid_retry_timeout(struct timer_list *t)
 	spin_unlock_irqrestore(&qp->r_lock, flags);
 }
 
+/* Does @sge meet the alignment requirements for tid rdma? */
+static inline bool hfi1_check_sge_align(struct rvt_sge *sge, int num_sge)
+{
+	int i;
+
+	for (i = 0; i < num_sge; i++, sge++)
+		if ((u64)sge->vaddr & ~PAGE_MASK ||
+		    sge->sge_length & ~PAGE_MASK)
+			return false;
+	return true;
+}
+
+void setup_tid_rdma_wqe(struct rvt_qp *qp, struct rvt_swqe *wqe)
+{
+	struct hfi1_qp_priv *qpriv = (struct hfi1_qp_priv *)qp->priv;
+	struct hfi1_swqe_priv *priv = wqe->priv;
+	struct tid_rdma_params *remote;
+	bool do_tid_rdma = false;
+
+	rcu_read_lock();
+	remote = rcu_dereference(qpriv->tid_rdma.remote);
+	/*
+	 * If TID RDMA is disabled by the negotiation, don't
+	 * use it.
+	 */
+	if (!remote)
+		goto exit;
+
+	if (wqe->wr.opcode == IB_WR_RDMA_READ) {
+		if (hfi1_check_sge_align(&wqe->sg_list[0], wqe->wr.num_sge) &&
+		    qpriv->tid_rdma.n_read < remote->max_read) {
+			wqe->wr.opcode = IB_WR_TID_RDMA_READ;
+			do_tid_rdma = true;
+			priv->tid_req.n_flows = remote->max_read;
+			qpriv->tid_r_reqs++;
+		}
+	} else if (wqe->wr.opcode == IB_WR_RDMA_WRITE) {
+		/*
+		 * TID RDMA is enabled for this RDMA WRITE request iff:
+		 *   1. The remote address is page-aligned,
+		 *   2. The length is larger than the minimum segment size,
+		 *   3. The length is page-multiple, and
+		 *   4. There are available TID RDMA WRITEs
+		 *      on the remote end.
+		 */
+		if (!(wqe->rdma_wr.remote_addr & ~PAGE_MASK) &&
+		    !(wqe->length & ~PAGE_MASK) &&
+		    qpriv->tid_rdma.n_write < remote->max_write) {
+			wqe->wr.opcode = IB_WR_TID_RDMA_WRITE;
+			do_tid_rdma = true;
+		}
+	}
+
+	if (do_tid_rdma) {
+		priv->tid_req.seg_len =
+			min_t(u32, remote->max_len, wqe->length);
+		priv->tid_req.total_segs =
+			DIV_ROUND_UP(wqe->length, priv->tid_req.seg_len);
+		/* Compute the last PSN of the request */
+		wqe->lpsn = wqe->psn;
+		if (wqe->wr.opcode == IB_WR_TID_RDMA_READ) {
+			wqe->lpsn += rvt_div_round_up_mtu(qp, wqe->length) - 1;
+		} else {
+			wqe->lpsn += priv->tid_req.total_segs - 1;
+			atomic_inc(&qpriv->n_requests);
+		}
+		priv->tid_req.cur_seg = 0;
+		priv->tid_req.comp_seg = 0;
+		priv->tid_req.ack_seg = 0;
+		priv->tid_req.state = TID_REQUEST_INACTIVE;
+		/*
+		 * Reset acked_tail.
+		 * TID RDMA READ does not have ACKs so it does not
+		 * update the pointer. We have to reset it so TID RDMA
+		 * WRITE does not get confused.
+		 */
+		priv->tid_req.acked_tail = priv->tid_req.setup_head;
+	}
+exit:
+	rcu_read_unlock();
+}
+
 static bool _hfi1_schedule_tid_send(struct rvt_qp *qp)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
