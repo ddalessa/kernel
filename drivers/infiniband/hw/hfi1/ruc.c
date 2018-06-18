@@ -785,6 +785,7 @@ void hfi1_make_ruc_header(struct rvt_qp *qp, struct ib_other_headers *ohdr,
  * @qp: a pointer to QP
  * @ps: a pointer to a structure with commonly lookup values for
  *      the the send engine progress
+ * @tid - true if the tid leg
  *
  * This routine checks if the time slice for the QP has expired
  * for RC QPs, if so an additional work entry is queued. At this
@@ -792,7 +793,7 @@ void hfi1_make_ruc_header(struct rvt_qp *qp, struct ib_other_headers *ohdr,
  * returns true if a yield is required, otherwise, false
  * is returned.
  */
-bool hfi1_schedule_send_yield(struct rvt_qp *qp,  struct hfi1_pkt_state *ps,
+bool hfi1_schedule_send_yield(struct rvt_qp *qp, struct hfi1_pkt_state *ps,
 			      bool tid)
 {
 	ps->pkts_sent = true;
@@ -921,6 +922,7 @@ void hfi1_do_send(struct rvt_qp *qp, bool in_thread)
 			if (priv->s_flags & HFI1_S_TID_BUSY_SET)
 				qp->s_flags |= RVT_S_BUSY;
 			spin_unlock_irqrestore(&qp->s_lock, ps.flags);
+
 			/*
 			 * If the packet cannot be sent now, return and
 			 * the send engine will be woken up later.

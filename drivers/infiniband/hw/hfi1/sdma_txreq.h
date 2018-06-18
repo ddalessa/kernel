@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2016 Intel Corporation.
+ * Copyright(c) 2016 - 2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -91,6 +91,7 @@ struct sdma_desc {
 #define SDMA_TXREQ_F_URGENT       0x0001
 #define SDMA_TXREQ_F_AHG_COPY     0x0002
 #define SDMA_TXREQ_F_USE_AHG      0x0004
+#define SDMA_TXREQ_F_SGE_CORRUPT  0x0008
 
 struct sdma_txreq;
 typedef void (*callback_t)(struct sdma_txreq *, int);
