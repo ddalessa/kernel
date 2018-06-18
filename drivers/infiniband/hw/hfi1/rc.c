@@ -118,6 +118,7 @@ static int make_rc_ack(struct hfi1_ibdev *dev, struct rvt_qp *qp,
 	int middle = 0;
 	u32 pmtu = qp->pmtu;
 	struct hfi1_qp_priv *priv = qp->priv;
+	u8 next = qp->s_tail_ack_queue;
 	bool last_pkt;
 	u32 delta;
 
@@ -148,8 +149,17 @@ static int make_rc_ack(struct hfi1_ibdev *dev, struct rvt_qp *qp,
 		 * response has been sent instead of only being
 		 * constructed.
 		 */
-		if (++qp->s_tail_ack_queue > rvt_size_atomic(&dev->rdi))
-			qp->s_tail_ack_queue = 0;
+		if (++next > rvt_size_atomic(&dev->rdi))
+			next = 0;
+		/*
+		 * Only advance the s_acked_ack_queue pointer if there
+		 * have been no TID RDMA requests.
+		 */
+		e = &qp->s_ack_queue[qp->s_tail_ack_queue];
+		if (e->opcode != TID_OP(WRITE_REQ) &&
+		    qp->s_acked_ack_queue == qp->s_tail_ack_queue)
+			qp->s_acked_ack_queue = next;
+		qp->s_tail_ack_queue = next;
 		/* FALLTHROUGH */
 	case OP(SEND_ONLY):
 	case OP(ACKNOWLEDGE):
@@ -170,6 +180,10 @@ static int make_rc_ack(struct hfi1_ibdev *dev, struct rvt_qp *qp,
 			 */
 			len = e->rdma_sge.sge_length;
 			if (len && !e->rdma_sge.mr) {
+				if (qp->s_acked_ack_queue ==
+				    qp->s_tail_ack_queue)
+					qp->s_acked_ack_queue =
+						qp->r_head_ack_queue;
 				qp->s_tail_ack_queue = qp->r_head_ack_queue;
 				goto bail;
 			}
@@ -200,6 +214,10 @@ static int make_rc_ack(struct hfi1_ibdev *dev, struct rvt_qp *qp,
 			 */
 			len = e->rdma_sge.sge_length;
 			if (len && !e->rdma_sge.mr) {
+				if (qp->s_acked_ack_queue ==
+				    qp->s_tail_ack_queue)
+					qp->s_acked_ack_queue =
+						qp->r_head_ack_queue;
 				qp->s_tail_ack_queue = qp->r_head_ack_queue;
 				goto bail;
 			}
@@ -2197,6 +2215,8 @@ static noinline int rc_rcv_error(struct ib_other_headers *ohdr, void *data,
 		e->psn = psn;
 		if (old_req)
 			goto unlock_done;
+		if (qp->s_acked_ack_queue == qp->s_tail_ack_queue)
+			qp->s_acked_ack_queue = prev;
 		qp->s_tail_ack_queue = prev;
 		break;
 	}
@@ -2210,6 +2230,8 @@ static noinline int rc_rcv_error(struct ib_other_headers *ohdr, void *data,
 		 */
 		if (!e || e->opcode != (u8)opcode || old_req)
 			goto unlock_done;
+		if (qp->s_tail_ack_queue == qp->s_acked_ack_queue)
+			qp->s_acked_ack_queue = prev;
 		qp->s_tail_ack_queue = prev;
 		break;
 	}
@@ -2236,6 +2258,8 @@ static noinline int rc_rcv_error(struct ib_other_headers *ohdr, void *data,
 		 * Resend the RDMA read or atomic op which
 		 * ACKs this duplicate request.
 		 */
+		if (qp->s_tail_ack_queue == qp->s_acked_ack_queue)
+			qp->s_acked_ack_queue = mra;
 		qp->s_tail_ack_queue = mra;
 		break;
 	}
@@ -2611,7 +2635,7 @@ send_last:
 		if (next > rvt_size_atomic(ib_to_rvt(qp->ibqp.device)))
 			next = 0;
 		spin_lock_irqsave(&qp->s_lock, flags);
-		if (unlikely(next == qp->s_tail_ack_queue)) {
+		if (unlikely(next == qp->s_acked_ack_queue)) {
 			if (!qp->s_ack_queue[next].sent)
 				goto nack_inv_unlck;
 			update_ack_queue(qp, next);
@@ -2688,7 +2712,7 @@ send_last:
 		if (next > rvt_size_atomic(ib_to_rvt(qp->ibqp.device)))
 			next = 0;
 		spin_lock_irqsave(&qp->s_lock, flags);
-		if (unlikely(next == qp->s_tail_ack_queue)) {
+		if (unlikely(next == qp->s_acked_ack_queue)) {
 			if (!qp->s_ack_queue[next].sent)
 				goto nack_inv_unlck;
 			update_ack_queue(qp, next);
