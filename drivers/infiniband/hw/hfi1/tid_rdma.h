@@ -285,6 +285,8 @@ bool hfi1_handle_kdeth_eflags(struct hfi1_ctxtdata *rcd,
 			      struct hfi1_pportdata *ppd,
 			      struct hfi1_packet *packet);
 
+bool hfi1_schedule_tid_send(struct rvt_qp *qp);
+
 int hfi1_qp_priv_init(struct rvt_dev_info *rdi, struct rvt_qp *qp,
 		      struct ib_qp_init_attr *init_attr);
 void hfi1_qp_priv_tid_free(struct rvt_dev_info *rdi, struct rvt_qp *qp);
@@ -292,6 +294,7 @@ void hfi1_qp_priv_tid_free(struct rvt_dev_info *rdi, struct rvt_qp *qp);
 void hfi1_tid_rdma_restart_req(struct rvt_qp *qp, struct rvt_swqe *wqe,
 			       u32 *bth2);
 
+void _hfi1_do_tid_send(struct work_struct *work);
 void tid_rdma_opfn_init(struct rvt_qp *qp, struct tid_rdma_params *p);
 
 u32 hfi1_build_tid_rdma_read_packet(struct rvt_swqe *wqe,
