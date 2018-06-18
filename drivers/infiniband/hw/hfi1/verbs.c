@@ -47,6 +47,7 @@
 
 #include <rdma/ib_mad.h>
 #include <rdma/ib_user_verbs.h>
+#include <rdma/ib_hdrs.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/utsname.h>
@@ -349,6 +350,14 @@ const u8 hdr_len_by_opcode[256] = {
 	[IB_OPCODE_RC_FETCH_ADD]                      = 12 + 8 + 28,
 	[IB_OPCODE_RC_SEND_LAST_WITH_INVALIDATE]      = 12 + 8 + 4,
 	[IB_OPCODE_RC_SEND_ONLY_WITH_INVALIDATE]      = 12 + 8 + 4,
+	[IB_OPCODE_TID_RDMA_WRITE_REQ]                = 12 + 8 + 36,
+	[IB_OPCODE_TID_RDMA_WRITE_RESP]               = 12 + 8 + 36,
+	[IB_OPCODE_TID_RDMA_WRITE_DATA]               = 12 + 8 + 36,
+	[IB_OPCODE_TID_RDMA_WRITE_DATA_LAST]          = 12 + 8 + 36,
+	[IB_OPCODE_TID_RDMA_READ_REQ]                 = 12 + 8 + 36,
+	[IB_OPCODE_TID_RDMA_READ_RESP]                = 12 + 8 + 36,
+	[IB_OPCODE_TID_RDMA_ACK]                      = 12 + 8 + 36,
+	[IB_OPCODE_TID_RDMA_RESYNC]                   = 12 + 8 + 36,
 	/* UC */
 	[IB_OPCODE_UC_SEND_FIRST]                     = 12 + 8,
 	[IB_OPCODE_UC_SEND_MIDDLE]                    = 12 + 8,
@@ -392,6 +401,21 @@ static const opcode_handler opcode_handler_tbl[256] = {
 	[IB_OPCODE_RC_FETCH_ADD]                      = &hfi1_rc_rcv,
 	[IB_OPCODE_RC_SEND_LAST_WITH_INVALIDATE]      = &hfi1_rc_rcv,
 	[IB_OPCODE_RC_SEND_ONLY_WITH_INVALIDATE]      = &hfi1_rc_rcv,
+
+	/*
+	 * TID RDMA has separate handlers for different opcodes.
+	 * However, TID RDMA opcodes can be handled by a single handler
+	 * just like all the RC opcodes.
+	 */
+	[IB_OPCODE_TID_RDMA_WRITE_REQ]       = &hfi1_rc_rcv_tid_rdma_write_req,
+	[IB_OPCODE_TID_RDMA_WRITE_RESP]      = &hfi1_rc_rcv_tid_rdma_write_resp,
+	[IB_OPCODE_TID_RDMA_WRITE_DATA]      = &hfi1_rc_rcv_tid_rdma_write_data,
+	[IB_OPCODE_TID_RDMA_WRITE_DATA_LAST] = &hfi1_rc_rcv_tid_rdma_write_data,
+	[IB_OPCODE_TID_RDMA_READ_REQ]        = &hfi1_rc_rcv_tid_rdma_read_req,
+	[IB_OPCODE_TID_RDMA_READ_RESP]       = &hfi1_rc_rcv_tid_rdma_read_resp,
+	[IB_OPCODE_TID_RDMA_RESYNC]          = &hfi1_rc_rcv_tid_rdma_resync,
+	[IB_OPCODE_TID_RDMA_ACK]             = &hfi1_rc_rcv_tid_rdma_ack,
+
 	/* UC */
 	[IB_OPCODE_UC_SEND_FIRST]                     = &hfi1_uc_rcv,
 	[IB_OPCODE_UC_SEND_MIDDLE]                    = &hfi1_uc_rcv,
@@ -554,6 +578,124 @@ static u64 hfi1_fault_tx(struct rvt_qp *qp, u8 opcode, u64 pbc)
 		pbc |= PBC_TEST_EBP;
 #endif
 	return pbc;
+}
+
+static opcode_handler tid_qp_ok(int opcode, struct hfi1_packet *packet)
+{
+	if (packet->qp->ibqp.qp_type != IB_QPT_RC ||
+	    !(ib_rvt_state_ops[packet->qp->state] & RVT_PROCESS_RECV_OK))
+		return NULL;
+	if ((opcode & RVT_OPCODE_QP_MASK) == IB_OPCODE_TID_RDMA)
+		return opcode_handler_tbl[opcode];
+	return NULL;
+}
+
+void hfi1_kdeth_eager_rcv(struct hfi1_packet *packet)
+{
+	struct hfi1_ctxtdata *rcd = packet->rcd;
+	struct ib_header *hdr = packet->hdr;
+	u32 tlen = packet->tlen;
+	struct hfi1_pportdata *ppd = rcd->ppd;
+	struct hfi1_ibport *ibp = &ppd->ibport_data;
+	struct rvt_dev_info *rdi = &ppd->dd->verbs_dev.rdi;
+	opcode_handler opcode_handler;
+	unsigned long flags;
+	u32 qp_num;
+	int lnh;
+	u8 opcode;
+
+	/* DW == LRH (2) + BTH (3) + KDETH (9) + CRC (1) */
+	if (unlikely(tlen < 15 * sizeof(u32)))
+		goto drop;
+
+	lnh = be16_to_cpu(hdr->lrh[0]) & 3;
+	if (lnh != HFI1_LRH_BTH)
+		goto drop;
+
+	packet->ohdr = &hdr->u.oth;
+	trace_input_ibhdr(rcd->dd, packet, !!(rhf_dc_info(packet->rhf)));
+
+	opcode = (be32_to_cpu(packet->ohdr->bth[0]) >> 24);
+	inc_opstats(tlen, &rcd->opstats->stats[opcode]);
+
+	/* verbs_qp can be picked up from any tid_rdma header struct */
+	qp_num = be32_to_cpu(packet->ohdr->u.tid_rdma.w_data.verbs_qp) &
+		RVT_QPN_MASK;
+
+	rcu_read_lock();
+	packet->qp = rvt_lookup_qpn(rdi, &ibp->rvp, qp_num);
+	if (!packet->qp)
+		goto drop_rcu;
+	spin_lock_irqsave(&packet->qp->r_lock, flags);
+	opcode_handler = tid_qp_ok(opcode, packet);
+	if (likely(opcode_handler))
+		opcode_handler(packet);
+	else
+		goto drop_unlock;
+	spin_unlock_irqrestore(&packet->qp->r_lock, flags);
+	rcu_read_unlock();
+
+	return;
+drop_unlock:
+	spin_unlock_irqrestore(&packet->qp->r_lock, flags);
+drop_rcu:
+	rcu_read_unlock();
+drop:
+	ibp->rvp.n_pkt_drops++;
+}
+
+void hfi1_kdeth_expected_rcv(struct hfi1_packet *packet)
+{
+	struct hfi1_ctxtdata *rcd = packet->rcd;
+	struct ib_header *hdr = packet->hdr;
+	u32 tlen = packet->tlen;
+	struct hfi1_pportdata *ppd = rcd->ppd;
+	struct hfi1_ibport *ibp = &ppd->ibport_data;
+	struct rvt_dev_info *rdi = &ppd->dd->verbs_dev.rdi;
+	opcode_handler opcode_handler;
+	unsigned long flags;
+	u32 qp_num;
+	int lnh;
+	u8 opcode;
+
+	/* DW == LRH (2) + BTH (3) + KDETH (9) + CRC (1) */
+	if (unlikely(tlen < 15 * sizeof(u32)))
+		goto drop;
+
+	lnh = be16_to_cpu(hdr->lrh[0]) & 3;
+	if (lnh != HFI1_LRH_BTH)
+		goto drop;
+
+	packet->ohdr = &hdr->u.oth;
+	trace_input_ibhdr(rcd->dd, packet, !!(rhf_dc_info(packet->rhf)));
+
+	opcode = (be32_to_cpu(packet->ohdr->bth[0]) >> 24);
+	inc_opstats(tlen, &rcd->opstats->stats[opcode]);
+
+	/* verbs_qp can be picked up from any tid_rdma header struct */
+	qp_num = be32_to_cpu(packet->ohdr->u.tid_rdma.w_data.verbs_qp) &
+		RVT_QPN_MASK;
+
+	rcu_read_lock();
+	packet->qp = rvt_lookup_qpn(rdi, &ibp->rvp, qp_num);
+	if (!packet->qp)
+		goto drop_rcu;
+	spin_lock_irqsave(&packet->qp->r_lock, flags);
+	opcode_handler = tid_qp_ok(opcode, packet);
+	if (likely(opcode_handler))
+		opcode_handler(packet);
+	else
+		goto drop_unlock;
+	spin_unlock_irqrestore(&packet->qp->r_lock, flags);
+	rcu_read_unlock();
+
+	return;
+drop_unlock:
+	spin_unlock_irqrestore(&packet->qp->r_lock, flags);
+drop_rcu:
+	rcu_read_unlock();
+drop:
+	ibp->rvp.n_pkt_drops++;
 }
 
 static int hfi1_do_pkey_check(struct hfi1_packet *packet)

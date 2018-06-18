@@ -299,6 +299,21 @@ void hfi1_rc_rcv_tid_rdma_read_resp(struct hfi1_packet *packet)
 {
 }
 
+void hfi1_rc_rcv_tid_rdma_resync(struct hfi1_packet *packet)
+{
+}
+
+void hfi1_rc_rcv_tid_rdma_ack(struct hfi1_packet *packet)
+{
+}
+
+bool hfi1_handle_kdeth_eflags(struct hfi1_ctxtdata *rcd,
+			      struct hfi1_pportdata *ppd,
+			      struct hfi1_packet *packet)
+{
+	return true;
+}
+
 /**
  * qp_to_rcd - determine the receive context used by a qp
  * @qp - the qp
