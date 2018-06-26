@@ -58,6 +58,8 @@
 #include "qp.h"
 #include "trace.h"
 #include "verbs_txreq.h"
+#include "user_exp_rcv.h"
+#include "tid_rdma.h"
 
 unsigned int hfi1_qp_table_size = 256;
 module_param_named(qp_table_size, hfi1_qp_table_size, uint, S_IRUGO);
@@ -130,6 +132,12 @@ const struct rvt_operation_params hfi1_post_parms[RVT_OPERATION_MAX] = {
 [IB_WR_SEND_WITH_INV] = {
 	.length = sizeof(struct ib_send_wr),
 	.qpt_support = BIT(IB_QPT_RC),
+},
+
+[IB_WR_OPFN] = {
+	.length = sizeof(struct ib_atomic_wr),
+	.qpt_support = BIT(IB_QPT_RC),
+	.flags = RVT_OPERATION_USE_RESERVE,
 },
 
 };
@@ -279,6 +287,8 @@ void hfi1_modify_qp(struct rvt_qp *qp, struct ib_qp_attr *attr,
 		priv->s_sendcontext = qp_to_send_context(qp, priv->s_sc);
 		qp_set_16b(qp);
 	}
+
+	opfn_init(qp, attr, attr_mask);
 }
 
 /**
@@ -647,6 +657,7 @@ void qp_priv_free(struct rvt_dev_info *rdi, struct rvt_qp *qp)
 {
 	struct hfi1_qp_priv *priv = qp->priv;
 
+	hfi1_qp_priv_tid_free(rdi, qp);
 	kfree(priv->s_ahg);
 	kfree(priv);
 }
@@ -687,6 +698,8 @@ void stop_send_queue(struct rvt_qp *qp)
 	struct hfi1_qp_priv *priv = qp->priv;
 
 	cancel_work_sync(&priv->s_iowait.iowork);
+	if (cancel_work_sync(&priv->tid_rdma.trigger_work))
+		rvt_put_qp(qp);
 }
 
 void quiesce_qp(struct rvt_qp *qp)
@@ -702,6 +715,10 @@ void notify_qp_reset(struct rvt_qp *qp)
 {
 	qp->r_adefered = 0;
 	clear_ahg(qp);
+
+	/* Clear any OPFN state */
+	if (qp->ibqp.qp_type == IB_QPT_RC)
+		opfn_conn_error(qp);
 }
 
 /*
