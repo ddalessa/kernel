@@ -72,6 +72,8 @@ struct hfi1_packet;
 
 #include "iowait.h"
 #include "tid_rdma.h"
+#include "opfn.h"
+#include "common.h"
 
 #define HFI1_MAX_RDMA_ATOMIC     16
 
@@ -168,6 +170,11 @@ struct hfi1_qp_priv {
 	struct tid_rdma_qp_params tid_rdma;
 	struct rvt_qp *owner;
 	u8 hdr_type; /* 9B or 16B */
+	unsigned long tid_timer_timeout_jiffies;
+	unsigned long tid_retry_timeout_jiffies;
+	u8 s_retry;
+	u16 pkts_ps;            /* packets per segment */
+	u8 timeout_shift;       /* account for number of packets per segment */
 };
 
 /*
