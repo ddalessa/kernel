@@ -353,6 +353,39 @@ int pci_enable_pcie_error_reporting(struct pci_dev *dev)
 }
 EXPORT_SYMBOL_GPL(pci_enable_pcie_error_reporting);
 
+/**
+ * pcie_aer_clear_and_set_dword - Set or clear AER registers
+ * @dev: pci dev data
+ * @pos: The offset of AER registers
+ * @clear: The bits to clear
+ * @set: The bits to set
+ *
+ * This function must only be used by the driver owning the device.
+ * Return:
+ * * 0 - on success
+ * * Negative error code - on generic failures
+ * * Positive error code - on PCI access errors
+ */
+int pcie_aer_clear_and_set_dword(struct pci_dev *dev, int pos,
+				 u32 clear, u32 set)
+{
+	u32 data;
+	int ret;
+
+	if (!dev->aer_cap)
+		return -EIO;
+
+	ret = pci_read_config_dword(dev, dev->aer_cap + pos, &data);
+	if (!ret) {
+		data &= ~clear;
+		data |= set;
+		return pci_write_config_dword(dev, dev->aer_cap + pos, data);
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(pcie_aer_clear_and_set_dword);
+
 int pci_disable_pcie_error_reporting(struct pci_dev *dev)
 {
 	if (pcie_aer_get_firmware_first(dev))

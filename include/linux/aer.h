@@ -46,6 +46,8 @@ int pci_enable_pcie_error_reporting(struct pci_dev *dev);
 int pci_disable_pcie_error_reporting(struct pci_dev *dev);
 int pci_cleanup_aer_uncorrect_error_status(struct pci_dev *dev);
 int pci_cleanup_aer_error_status_regs(struct pci_dev *dev);
+int pcie_aer_clear_and_set_dword(struct pci_dev *dev, int pos,
+				 u32 clear, u32 set);
 #else
 static inline int pci_enable_pcie_error_reporting(struct pci_dev *dev)
 {
@@ -63,6 +65,12 @@ static inline int pci_cleanup_aer_error_status_regs(struct pci_dev *dev)
 {
 	return -EINVAL;
 }
+
+static inline int pcie_aer_clear_and_set_dword(struct pci_dev *dev, int pos,
+					       u32 clear, u32 set)
+{
+	return -EINVAL;
+}
 #endif
 
 void cper_print_aer(struct pci_dev *dev, int aer_severity,
@@ -70,5 +78,14 @@ void cper_print_aer(struct pci_dev *dev, int aer_severity,
 int cper_severity_to_aer(int cper_severity);
 void aer_recover_queue(int domain, unsigned int bus, unsigned int devfn,
 		       int severity, struct aer_capability_regs *aer_regs);
+static inline int pcie_aer_set_dword(struct pci_dev *dev, int pos, u32 set)
+{
+	return pcie_aer_clear_and_set_dword(dev, pos, 0, set);
+}
+
+static inline int pcie_aer_clear_dword(struct pci_dev *dev, int pos, u32 clear)
+{
+	return pcie_aer_clear_and_set_dword(dev, pos, clear, 0);
+}
 #endif //_AER_H_
 
