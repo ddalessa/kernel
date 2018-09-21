@@ -1,5 +1,6 @@
+/* SPDX-License-Identifier: (GPL-2.0 OR BSD-3-Clause) */
 /*
- * Copyright(c) 2015 - 2018 Intel Corporation.
+ * Copyright(c) 2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -44,22 +45,52 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
+#if !defined(__HFI1_TRACE_IOWAIT_H) || defined(TRACE_HEADER_MULTI_READ)
+#define __HFI1_TRACE_IOWAIT_H
 
-#define packettype_name(etype) { RHF_RCV_TYPE_##etype, #etype }
-#define show_packettype(etype)                  \
-__print_symbolic(etype,                         \
-	packettype_name(EXPECTED),              \
-	packettype_name(EAGER),                 \
-	packettype_name(IB),                    \
-	packettype_name(ERROR),                 \
-	packettype_name(BYPASS))
+#include <linux/tracepoint.h>
+#include "iowait.h"
+#include "verbs.h"
 
-#include "trace_dbg.h"
-#include "trace_misc.h"
-#include "trace_ctxts.h"
-#include "trace_ibhdrs.h"
-#include "trace_rc.h"
-#include "trace_rx.h"
-#include "trace_tx.h"
-#include "trace_mmu.h"
-#include "trace_iowait.h"
+#undef TRACE_SYSTEM
+#define TRACE_SYSTEM hfi1_iowait
+
+DECLARE_EVENT_CLASS(hfi1_iowait_template,
+		    TP_PROTO(struct iowait *wait, u32 flag),
+		    TP_ARGS(wait, flag),
+		    TP_STRUCT__entry(/* entry */
+			    __field(unsigned long, addr)
+			    __field(unsigned long, flags)
+			    __field(u32, flag)
+			    __field(u32, qpn)
+			    ),
+		    TP_fast_assign(/* assign */
+			    __entry->addr = (unsigned long)wait;
+			    __entry->flags = wait->flags;
+			    __entry->flag = (1 << flag);
+			    __entry->qpn = iowait_to_qp(wait)->ibqp.qp_num;
+			    ),
+		    TP_printk(/* print */
+			    "iowait 0x%lx qp %u flags 0x%lx flag 0x%x",
+			    __entry->addr,
+			    __entry->qpn,
+			    __entry->flags,
+			    __entry->flag
+			    )
+	);
+
+DEFINE_EVENT(hfi1_iowait_template, hfi1_iowait_set,
+	     TP_PROTO(struct iowait *wait, u32 flag),
+	     TP_ARGS(wait, flag));
+
+DEFINE_EVENT(hfi1_iowait_template, hfi1_iowait_clear,
+	     TP_PROTO(struct iowait *wait, u32 flag),
+	     TP_ARGS(wait, flag));
+
+#endif /* __HFI1_TRACE_IOWAIT_H */
+
+#undef TRACE_INCLUDE_PATH
+#undef TRACE_INCLUDE_FILE
+#define TRACE_INCLUDE_PATH .
+#define TRACE_INCLUDE_FILE trace_iowait
+#include <trace/define_trace.h>
