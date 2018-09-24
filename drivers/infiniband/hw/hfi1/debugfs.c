@@ -53,6 +53,7 @@
 #include <linux/types.h>
 #include <linux/ratelimit.h>
 #include <linux/fault-inject.h>
+#include <rdma/rdma_user_ioctl.h>
 
 #include "hfi.h"
 #include "trace.h"
@@ -633,114 +634,6 @@ static ssize_t asic_flags_write(struct file *file, const char __user *buf,
 	return ret;
 }
 
-/* read the dc8051 memory */
-static ssize_t dc8051_memory_read(struct file *file, char __user *buf,
-				  size_t count, loff_t *ppos)
-{
-	struct hfi1_pportdata *ppd = private2ppd(file);
-	ssize_t rval;
-	void *tmp;
-	loff_t start, end;
-
-	/* the checks below expect the position to be positive */
-	if (*ppos < 0)
-		return -EINVAL;
-
-	tmp = kzalloc(DC8051_DATA_MEM_SIZE, GFP_KERNEL);
-	if (!tmp)
-		return -ENOMEM;
-
-	/*
-	 * Fill in the requested portion of the temporary buffer from the
-	 * 8051 memory.  The 8051 memory read is done in terms of 8 bytes.
-	 * Adjust start and end to fit.  Skip reading anything if out of
-	 * range.
-	 */
-	start = *ppos & ~0x7;	/* round down */
-	if (start < DC8051_DATA_MEM_SIZE) {
-		end = (*ppos + count + 7) & ~0x7; /* round up */
-		if (end > DC8051_DATA_MEM_SIZE)
-			end = DC8051_DATA_MEM_SIZE;
-		rval = read_8051_data(ppd->dd, start, end - start,
-				      (u64 *)(tmp + start));
-		if (rval)
-			goto done;
-	}
-
-	rval = simple_read_from_buffer(buf, count, ppos, tmp,
-				       DC8051_DATA_MEM_SIZE);
-done:
-	kfree(tmp);
-	return rval;
-}
-
-static ssize_t debugfs_lcb_read(struct file *file, char __user *buf,
-				size_t count, loff_t *ppos)
-{
-	struct hfi1_pportdata *ppd = private2ppd(file);
-	struct hfi1_devdata *dd = ppd->dd;
-	unsigned long total, csr_off;
-	u64 data;
-
-	if (*ppos < 0)
-		return -EINVAL;
-	/* only read 8 byte quantities */
-	if ((count % 8) != 0)
-		return -EINVAL;
-	/* offset must be 8-byte aligned */
-	if ((*ppos % 8) != 0)
-		return -EINVAL;
-	/* do nothing if out of range or zero count */
-	if (*ppos >= (LCB_END - LCB_START) || !count)
-		return 0;
-	/* reduce count if needed */
-	if (*ppos + count > LCB_END - LCB_START)
-		count = (LCB_END - LCB_START) - *ppos;
-
-	csr_off = LCB_START + *ppos;
-	for (total = 0; total < count; total += 8, csr_off += 8) {
-		if (read_lcb_csr(dd, csr_off, (u64 *)&data))
-			break; /* failed */
-		if (put_user(data, (unsigned long __user *)(buf + total)))
-			break;
-	}
-	*ppos += total;
-	return total;
-}
-
-static ssize_t debugfs_lcb_write(struct file *file, const char __user *buf,
-				 size_t count, loff_t *ppos)
-{
-	struct hfi1_pportdata *ppd = private2ppd(file);
-	struct hfi1_devdata *dd = ppd->dd;
-	unsigned long total, csr_off, data;
-
-	if (*ppos < 0)
-		return -EINVAL;
-	/* only write 8 byte quantities */
-	if ((count % 8) != 0)
-		return -EINVAL;
-	/* offset must be 8-byte aligned */
-	if ((*ppos % 8) != 0)
-		return -EINVAL;
-	/* do nothing if out of range or zero count */
-	if (*ppos >= (LCB_END - LCB_START) || !count)
-		return 0;
-	/* reduce count if needed */
-	if (*ppos + count > LCB_END - LCB_START)
-		count = (LCB_END - LCB_START) - *ppos;
-
-	csr_off = LCB_START + *ppos;
-	for (total = 0; total < count; total += 8, csr_off += 8) {
-		if (get_user(data, (unsigned long __user *)(buf + total)))
-			break;
-		if (write_lcb_csr(dd, csr_off, data))
-			break; /* failed */
-	}
-	*ppos += total;
-	return total;
-}
-
 /*
  * read the per-port QSFP data for ppd
  */
@@ -1120,8 +1013,6 @@ static const struct counter_info port_cntr_ops[] = {
 	DEBUGFS_XOPS("qsfp2", qsfp2_debugfs_read, qsfp2_debugfs_write,
 		     qsfp2_debugfs_open, qsfp2_debugfs_release),
 	DEBUGFS_OPS("asic_flags", asic_flags_read, asic_flags_write),
-	DEBUGFS_OPS("dc8051_memory", dc8051_memory_read, NULL),
-	DEBUGFS_OPS("lcb", debugfs_lcb_read, debugfs_lcb_write),
 };
 
 static void *_sdma_cpu_list_seq_start(struct seq_file *s, loff_t *pos)
@@ -1157,9 +1048,348 @@ static int _sdma_cpu_list_seq_show(struct seq_file *s, void *v)
 	return 0;
 }
 
+enum diag_file_owner_type {
+	SERVICE_TYPE_NONE,
+	SERVICE_TYPE_DIAGS,
+	SERVICE_TYPE_FW,
+};
+
+struct diag_file_priv {
+	struct hfi1_devdata *dd;
+	pid_t owner;
+	enum diag_file_owner_type type;
+	u64 bar_size;
+};
+
+static int diag_file_open(struct inode *inode, struct file *file)
+{
+	struct diag_file_priv *priv;
+
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+	priv->owner = current->pid;
+	priv->dd = inode->i_private;
+	priv->type = SERVICE_TYPE_NONE;
+	priv->bar_size = pci_resource_len(priv->dd->pcidev, 0);
+	file->private_data = priv;
+	return 0;
+}
+
+/* Must be called with debugfs file reference held. */
+static int diag_setup_base(struct diag_file_priv *priv, loff_t offset,
+			   size_t len, void __iomem **base)
+{
+	struct hfi1_devdata *dd = priv->dd;
+
+	switch (priv->type) {
+	case SERVICE_TYPE_DIAGS:
+		/* must be in range */
+		if (offset + len > priv->bar_size + DC8051_DATA_MEM_SIZE)
+			return -EINVAL;
+		if (offset < RCV_ARRAY)
+			*base = dd->kregbase1 + offset;
+		else if (offset < dd->base2_start)
+			*base = dd->rcvarray_wc + (offset - RCV_ARRAY);
+		else if (offset < TXE_PIO_SEND)
+			*base = dd->kregbase2 + (offset - dd->base2_start);
+		else if (offset < priv->bar_size)
+			*base = dd->piobase + (offset - TXE_PIO_SEND);
+		else if (offset < priv->bar_size + DC8051_DATA_MEM_SIZE)
+			*base = (void __iomem *)priv->bar_size;
+		else
+			return -EINVAL;
+		break;
+	case SERVICE_TYPE_FW:
+		/*
+		 * Clamp the BAR area that is being accessed to only the
+		 * region that is needed.
+		 */
+		if (offset >= ASIC_GPIO_OE &&
+		    offset + len <= ASIC + ASIC_EEP_DATA + 8)
+			*base = dd->kregbase1 + offset;
+		else
+			return -EINVAL;
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static ssize_t diag_file_read(struct file *file, char __user *buf, size_t len,
+			      loff_t *off)
+{
+	struct diag_file_priv *priv;
+	struct hfi1_devdata *dd;
+	unsigned long total = 0;
+	void __iomem *base = NULL;
+	u64 data;
+	ssize_t ret = 0;
+
+	if (*off < 0)
+		return -EINVAL;
+	/* only read 8 byte quantities */
+	if ((len % 8) != 0)
+		return -EINVAL;
+	/* offset must be 8-byte aligned */
+	if ((*off % 8) != 0)
+		return -EINVAL;
+	/* destination buffer must be 8-byte aligned */
+	if ((unsigned long)buf % 8 != 0)
+		return -EINVAL;
+
+	ret = debugfs_file_get(file->f_path.dentry);
+	if (unlikely(ret))
+		return ret;
+
+	priv = file->private_data;
+	ret = diag_setup_base(priv, *off, len, &base);
+	if (ret)
+		goto done;
+
+	dd = priv->dd;
+	/* Special handling of DC8051 memory. */
+	if ((unsigned long)base == priv->bar_size) {
+		loff_t start, end, s_off;
+
+		/*
+		 * Fill in the requested portion of the temporary buffer from
+		 * the 8051 memory.  The 8051 memory read is done in terms of
+		 * 8 bytes. Adjust start and end to fit.  Skip reading anything
+		 * if out of range.
+		 */
+		s_off = *off - priv->bar_size;
+		start = s_off & ~0x7;	/* round down */
+		if (start < DC8051_DATA_MEM_SIZE) {
+			void *tmp;
+
+			tmp = kzalloc(DC8051_DATA_MEM_SIZE, GFP_KERNEL);
+			if (!tmp) {
+				ret = -ENOMEM;
+				goto done;
+			}
+			end = (s_off + len + 7) & ~0x7; /* round up */
+			if (end > DC8051_DATA_MEM_SIZE)
+				end = DC8051_DATA_MEM_SIZE;
+			ret = read_8051_data(dd, start, end - start,
+					     (u64 *)(tmp + start));
+			if (ret) {
+				kfree(tmp);
+				goto done;
+			}
+			ret = simple_read_from_buffer(buf, len, &s_off, tmp,
+						      DC8051_DATA_MEM_SIZE);
+			*off = s_off + priv->bar_size;
+			kfree(tmp);
+		}
+		goto done;
+	}
+
+	for (total = 0; total < len; total += 8, *off += 8, base += 8) {
+		if (is_lcb_offset(*off)) {
+			if (read_lcb_csr(dd, *off, (u64 *)&data))
+				break;
+		}
+		/*
+		 * Cannot read ASIC GPIO/QSFP* clear and force CSRs without a
+		 * false parity error.  Avoid the whole issue by not reading
+		 * them.  These registers are defined as having a read value
+		 * of 0.
+		 */
+		else if (*off == ASIC_GPIO_CLEAR ||
+			 *off == ASIC_GPIO_FORCE ||
+			 *off == ASIC_QSFP1_CLEAR ||
+			 *off == ASIC_QSFP1_FORCE ||
+			 *off == ASIC_QSFP2_CLEAR ||
+			 *off == ASIC_QSFP2_FORCE) {
+			data = 0;
+		} else {
+			data = readq(base);
+		}
+		if (put_user(data, (unsigned long __user *)(buf + total)))
+			break;
+	}
+	ret = total;
+done:
+	debugfs_file_put(file->f_path.dentry);
+	return ret;
+}
+
+static ssize_t diag_file_write(struct file *file, const char __user *buf,
+			       size_t len, loff_t *off)
+{
+	struct diag_file_priv *priv;
+	struct hfi1_devdata *dd;
+	unsigned long total = 0;
+	void __iomem *base = NULL;
+	u64 data;
+	bool in_lcb = false;
+	ssize_t ret;
+
+	if (*off < 0)
+		return -EINVAL;
+	/* only read 8 byte quantities */
+	if ((len % 8) != 0)
+		return -EINVAL;
+	/* offset must be 8-byte aligned */
+	if ((*off % 8) != 0)
+		return -EINVAL;
+	/* destination buffer must be 8-byte aligned */
+	if ((unsigned long)buf % 8 != 0)
+		return -EINVAL;
+
+	ret = debugfs_file_get(file->f_path.dentry);
+	if (unlikely(ret))
+		return ret;
+
+	priv = file->private_data;
+	ret = diag_setup_base(priv, *off, len, &base);
+	if (ret)
+		goto done;
+
+	/* DC8051 memory cannot be written to. */
+	if ((unsigned long)base == priv->bar_size) {
+		ret = -EINVAL;
+		goto done;
+	}
+
+	dd = priv->dd;
+	for (total = 0; total < len; total += 8, *off += 8, base += 8) {
+		if (get_user(data, (unsigned long __user *)(buf + total)))
+			break;
+		if (is_lcb_offset(*off)) {
+			if (!in_lcb) {
+				if (acquire_lcb_access(dd, 1))
+					break;
+				in_lcb = true;
+			}
+		} else {
+			if (in_lcb) {
+				release_lcb_access(dd, 1);
+				in_lcb = false;
+			}
+		}
+		writeq(data, base);
+	}
+	if (in_lcb)
+		release_lcb_access(dd, 1);
+	ret = total;
+done:
+	debugfs_file_put(file->f_path.dentry);
+	return ret;
+}
+
+static long diag_file_ioctl(struct file *file, unsigned int cmd,
+			    unsigned long arg)
+{
+	struct diag_file_priv *priv;
+	enum diag_file_owner_type type;
+	u32 map_size = 0;
+	int ret;
+
+	ret = debugfs_file_get(file->f_path.dentry);
+	if (unlikely(ret))
+		return ret;
+	priv = file->private_data;
+	switch (cmd) {
+	case HFI1_IOCTL_SET_DIAG_TYPE:
+		if (get_user(type, (enum diag_file_owner_type __user *)arg)) {
+			ret = -EFAULT;
+			goto done;
+		}
+		priv->type = type;
+		break;
+	case HFI1_IOCTL_GET_DIAG_MAP_SIZE:
+		if (priv->type == SERVICE_TYPE_NONE) {
+			ret = -EINVAL;
+			goto done;
+		}
+		switch (priv->type) {
+		case SERVICE_TYPE_DIAGS:
+			map_size = priv->bar_size;
+		default:
+			break;
+		}
+
+		if (put_user(map_size, (u32 __user *)arg)) {
+			ret = -EFAULT;
+			goto done;
+		}
+	}
+done:
+	debugfs_file_put(file->f_path.dentry);
+	return 0;
+}
+
+static loff_t diag_file_seek(struct file *file, loff_t offset, int whence)
+{
+	struct diag_file_priv *priv;
+	loff_t ret = 0;
+
+	ret = debugfs_file_get(file->f_path.dentry);
+	if (unlikely(ret))
+		return ret;
+	priv = file->private_data;
+	ret = fixed_size_llseek(file, offset, whence, priv->bar_size);
+	debugfs_file_put(file->f_path.dentry);
+	return ret;
+}
+
+static int diag_file_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	struct diag_file_priv *priv;
+	struct hfi1_devdata *dd;
+	u64 addr, offset = vma->vm_pgoff << PAGE_SHIFT;
+	ssize_t length = vma->vm_end - vma->vm_start;
+	int ret;
+
+	ret = debugfs_file_get(file->f_path.dentry);
+	if (unlikely(ret))
+		return ret;
+	priv = file->private_data;
+	dd = priv->dd;
+	/*
+	 * Currently, we only allow diags service type to mmap memory (the
+	 * device BAR). However, this can be expanded to other service types
+	 * allowing for customization of mappable memory.
+	 */
+	if (priv->type != SERVICE_TYPE_DIAGS) {
+		ret = -EINVAL;
+		goto done;
+	}
+	addr = dd->physaddr + offset;
+
+	ret = io_remap_pfn_range(vma, vma->vm_start, PFN_DOWN(addr),
+				 length, vma->vm_page_prot);
+done:
+	debugfs_file_put(file->f_path.dentry);
+	return ret;
+}
+
+static int diag_file_release(struct inode *inode, struct file *file)
+{
+	struct diag_file_priv *priv = file->private_data;
+
+	file->private_data = NULL;
+	kfree(priv);
+	return 0;
+}
+
 DEBUGFS_SEQ_FILE_OPS(sdma_cpu_list);
 DEBUGFS_SEQ_FILE_OPEN(sdma_cpu_list)
 DEBUGFS_FILE_OPS(sdma_cpu_list);
+
+static const struct file_operations diag_file_ops = {
+	.owner = THIS_MODULE,
+	.open = diag_file_open,
+	.read = diag_file_read,
+	.write = diag_file_write,
+	.unlocked_ioctl = diag_file_ioctl,
+	.llseek = diag_file_seek,
+	.mmap = diag_file_mmap,
+	.release = diag_file_release
+};
 
 void hfi1_dbg_ibdev_init(struct hfi1_ibdev *ibd)
 {
@@ -1185,6 +1415,9 @@ void hfi1_dbg_ibdev_init(struct hfi1_ibdev *ibd)
 		pr_warn("create of %s symlink failed\n", name);
 		return;
 	}
+	if (!debugfs_create_file_unsafe("diag", 0600, ibd->hfi1_ibdev_dbg, dd,
+					&diag_file_ops))
+		pr_warn("create of diag failed\n");
 	DEBUGFS_SEQ_FILE_CREATE(opcode_stats, ibd->hfi1_ibdev_dbg, ibd);
 	DEBUGFS_SEQ_FILE_CREATE(tx_opcode_stats, ibd->hfi1_ibdev_dbg, ibd);
 	DEBUGFS_SEQ_FILE_CREATE(ctx_stats, ibd->hfi1_ibdev_dbg, ibd);

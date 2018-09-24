@@ -81,5 +81,9 @@
 #define HFI1_IOCTL_TID_INVAL_READ	_IOWR(RDMA_IOCTL_MAGIC, 0xED, struct hfi1_tid_info)
 /* get the version of the user cdev */
 #define HFI1_IOCTL_GET_VERS		_IOR(RDMA_IOCTL_MAGIC,  0xEE, int)
+/* set diag service type */
+#define HFI1_IOCTL_SET_DIAG_TYPE        _IOW(RDMA_IOCTL_MAGIC,  0xEF, __u32)
+/* get diag mmap size */
+#define HFI1_IOCTL_GET_DIAG_MAP_SIZE    _IOR(RDMA_IOCTL_MAGIC,  0xF0, __u32)
 
 #endif /* RDMA_USER_IOCTL_H */
