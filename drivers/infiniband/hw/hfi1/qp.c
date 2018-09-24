@@ -541,6 +541,34 @@ static int qp_idle(struct rvt_qp *qp)
 }
 
 /**
+ * ib_cq_tail - Return tail index of cq buffer
+ * @send_cq - The cq for send
+ *
+ * This is called in qp_iter_print to get tail
+ * of cq buffer.
+ */
+static u32 ib_cq_tail(struct ib_cq *send_cq)
+{
+	return ibcq_to_rvtcq(send_cq)->ip ?
+	       ibcq_to_rvtcq(send_cq)->queue->tail :
+	       ibcq_to_rvtcq(send_cq)->kqueue->tail;
+}
+
+/**
+ * ib_cq_head - Return head index of cq buffer
+ * @send_cq - The cq for send
+ *
+ * This is called in qp_iter_print to get head
+ * of cq buffer.
+ */
+static u32 ib_cq_head(struct ib_cq *send_cq)
+{
+	return ibcq_to_rvtcq(send_cq)->ip ?
+	       ibcq_to_rvtcq(send_cq)->queue->head :
+	       ibcq_to_rvtcq(send_cq)->kqueue->head;
+}
+
+/**
  * qp_iter_print - print the qp information to seq_file
  * @s: the seq_file to emit the qp information on
  * @iter: the iterator for the qp hash list
@@ -600,8 +628,8 @@ void qp_iter_print(struct seq_file *s, struct rvt_qp_iter *iter)
 		   sde ? sde->this_idx : 0,
 		   send_context,
 		   send_context ? send_context->sw_index : 0,
-		   ibcq_to_rvtcq(qp->ibqp.send_cq)->queue->head,
-		   ibcq_to_rvtcq(qp->ibqp.send_cq)->queue->tail,
+		   ib_cq_head(qp->ibqp.send_cq),
+		   ib_cq_tail(qp->ibqp.send_cq),
 		   qp->pid,
 		   qp->s_state,
 		   qp->s_ack_state,

@@ -59,20 +59,17 @@
  * notifications are armed.
  */
 #define RVT_CQ_NONE      (IB_CQ_NEXT_COMP + 1)
+#include <rdma/rvt-abi.h>
 
 /*
  * This structure is used to contain the head pointer, tail pointer,
  * and completion queue entries as a single memory allocation so
  * it can be mmap'ed into user space.
  */
-struct rvt_cq_wc {
+struct rvt_k_cq_wc {
 	u32 head;               /* index of next entry to fill */
 	u32 tail;               /* index of next ib_poll_cq() entry */
-	union {
-		/* these are actually size ibcq.cqe + 1 */
-		struct ib_uverbs_wc uqueue[0];
-		struct ib_wc kqueue[0];
-	};
+	struct ib_wc kqueue[0];
 };
 
 /*
@@ -88,6 +85,7 @@ struct rvt_cq {
 	struct rvt_dev_info *rdi;
 	struct rvt_cq_wc *queue;
 	struct rvt_mmap_info *ip;
+	struct rvt_k_cq_wc *kqueue;
 };
 
 static inline struct rvt_cq *ibcq_to_rvtcq(struct ib_cq *ibcq)
