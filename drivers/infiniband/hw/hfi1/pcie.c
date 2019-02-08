@@ -114,6 +114,7 @@ int hfi1_pcie_init(struct hfi1_devdata *dd)
 	}
 
 	pci_set_master(pdev);
+	pcie_aer_set_dword(pdev, PCI_ERR_UNCOR_MASK, PCI_ERR_UNC_UNSUP);
 	(void)pci_enable_pcie_error_reporting(pdev);
 	return 0;
 
