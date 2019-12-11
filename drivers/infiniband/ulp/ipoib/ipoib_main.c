@@ -1862,7 +1862,10 @@ static int ipoib_parent_init(struct net_device *ndev)
 			priv->port);
 		return result;
 	}
-	priv->max_ib_mtu = ib_mtu_enum_to_int(attr.max_mtu);
+	if (rdma_core_cap_opa_port(priv->ca, priv->port))
+		priv->max_ib_mtu = attr.phys_mtu;
+	else
+		priv->max_ib_mtu = ib_mtu_enum_to_int(attr.max_mtu);
 
 	result = ib_query_pkey(priv->ca, priv->port, 0, &priv->pkey);
 	if (result) {
