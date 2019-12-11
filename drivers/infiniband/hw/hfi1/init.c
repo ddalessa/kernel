@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015 - 2018 Intel Corporation.
+ * Copyright(c) 2015 - 2020 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -1332,6 +1332,8 @@ static struct hfi1_devdata *hfi1_alloc_devdata(struct pci_dev *pdev,
 		ret = -ENOMEM;
 		goto bail;
 	}
+
+	atomic_set(&dd->ipoib_rsm_usr_num, 0);
 
 	kobject_init(&dd->kobj, &hfi1_devdata_type);
 	return dd;
