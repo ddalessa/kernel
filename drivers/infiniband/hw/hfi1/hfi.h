@@ -1084,7 +1084,6 @@ struct hfi1_devdata {
 	struct cdev user_cdev;
 	struct cdev diag_cdev;
 	struct cdev ui_cdev;
-	struct device *user_device;
 	struct device *diag_device;
 	struct device *ui_device;
 

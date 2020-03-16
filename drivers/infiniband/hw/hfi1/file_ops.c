@@ -1682,8 +1682,7 @@ static int ctxt_reset(struct hfi1_ctxtdata *uctxt)
 
 static void user_remove(struct hfi1_devdata *dd)
 {
-
-	hfi1_cdev_cleanup(&dd->user_cdev, &dd->user_device);
+	hfi1_cdev_cleanup(&dd->user_cdev, NULL);
 }
 
 static int user_add(struct hfi1_devdata *dd)
@@ -1693,7 +1692,7 @@ static int user_add(struct hfi1_devdata *dd)
 
 	snprintf(name, sizeof(name), "%s_%d", class_name(), dd->unit);
 	ret = hfi1_cdev_init(dd->unit, name, &hfi1_file_ops,
-			     &dd->user_cdev, &dd->user_device,
+			     &dd->user_cdev, NULL,
 			     true, &dd->verbs_dev.rdi.ibdev.dev.kobj);
 	if (ret)
 		user_remove(dd);

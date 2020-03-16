@@ -1665,6 +1665,10 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	/* setup vnic */
 	hfi1_vnic_setup(dd);
+	
+	j = hfi1_device_create(dd);
+	if (j)
+		dd_dev_err(dd, "Failed to create /dev devices: %d\n", -j);
 
 	ret = hfi1_register_ib_device(dd);
 
@@ -1679,10 +1683,6 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		/* create debufs files after init and ib register */
 		hfi1_dbg_ibdev_init(&dd->verbs_dev);
 	}
-
-	j = hfi1_device_create(dd);
-	if (j)
-		dd_dev_err(dd, "Failed to create /dev devices: %d\n", -j);
 
 	if (initfail || ret) {
 		msix_clean_up_interrupts(dd);
@@ -1700,11 +1700,11 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 				ppd->link_wq = NULL;
 			}
 		}
-		if (!j)
-			hfi1_device_remove(dd);
 		if (!ret)
 			hfi1_unregister_ib_device(dd);
 		hfi1_vnic_cleanup(dd);
+		if (!j)
+			hfi1_device_remove(dd);
 		postinit_cleanup(dd);
 		if (initfail)
 			ret = initfail;
@@ -1740,9 +1740,6 @@ static void remove_one(struct pci_dev *pdev)
 	/* close debugfs files before ib unregister */
 	hfi1_dbg_ibdev_exit(&dd->verbs_dev);
 
-	/* remove the /dev hfi1 interface */
-	hfi1_device_remove(dd);
-
 	/* wait for existing user space clients to finish */
 	wait_for_clients(dd);
 
@@ -1751,6 +1748,9 @@ static void remove_one(struct pci_dev *pdev)
 
 	/* cleanup vnic */
 	hfi1_vnic_cleanup(dd);
+	
+	/* remove the /dev hfi1 interface */
+	hfi1_device_remove(dd);
 
 	/*
 	 * Disable the IB link, disable interrupts on the device,

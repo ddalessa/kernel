@@ -79,10 +79,12 @@ int hfi1_cdev_init(int minor, const char *name,
 		goto done;
 	}
 
-	if (user_accessible)
-		device = device_create(user_class, NULL, dev, NULL, "%s", name);
-	else
+	if (user_accessible) {
+		device = kobj_to_dev(parent);
+		device->devt = dev;
+	} else {
 		device = device_create(class, NULL, dev, NULL, "%s", name);
+	}
 
 	if (IS_ERR(device)) {
 		ret = PTR_ERR(device);
@@ -92,20 +94,27 @@ int hfi1_cdev_init(int minor, const char *name,
 		cdev_del(cdev);
 	}
 done:
-	*devp = device;
+	if (devp)
+		*devp = device;
 	return ret;
 }
 
+/*
+ * The pointer devp will be provided only if *devp is allocated
+ * dynamically, as shown in device_create().
+ */
 void hfi1_cdev_cleanup(struct cdev *cdev, struct device **devp)
 {
-	struct device *device = *devp;
+	struct device *device = NULL;
 
+	if (devp)
+		device = *devp;
 	if (device) {
 		device_unregister(device);
 		*devp = NULL;
-
-		cdev_del(cdev);
 	}
+	/* This will also decrement its parent's refcount */
+	cdev_del(cdev);
 }
 
 static const char *hfi1_class_name = "hfi1";
